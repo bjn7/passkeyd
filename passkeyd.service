@@ -1,0 +1,13 @@
+[Unit]
+Description=Opinionated WebAuthn authenticator backed by a TPM
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/passkeyd
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

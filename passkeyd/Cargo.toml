@@ -1,0 +1,24 @@
+[package]
+name = "passkeyd"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+uhidrs-sys = "1.0.4"
+enumflags2 = "^0.7.8"
+libc = "^0.2.150"
+ctaphid-types = "0.2.0"
+anyhow = "1.0.100"
+rand = "0.9.2"
+ctap-types.workspace = true
+log = "0.4.29"
+env_logger = "0.11.8"
+tss-esapi = "7.6.0"
+thiserror = "2.0.18"
+sha2 = "0.10.9"
+hex="0.4.2"
+der = { version = "0.7.10", features = ["derive", "std"] }
+ureq = "3.2.0"
+bytes = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features=["derive"] }
+pam.workspace = true

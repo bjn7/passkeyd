@@ -1,0 +1,54 @@
+name: Passkeyd Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install target
+        run: rustup target add x86_64-unknown-linux-gnu
+
+      - name: Install sys dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang llvm-dev libclang-dev libpam0g-dev libtss2-dev  gh
+
+      - name: Compile
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Compress release
+        run: |
+          tar czf passkeyd-x86_64-unknown-linux-gnu.tar.gz \
+            -C target/x86_64-unknown-linux-gnu/release passkeyd passkeyd-enroll passkeyd-select \
+            -C $GITHUB_WORKSPACE passkeyd.service passkeyd.conf icons
+      - name: Create GitHub Release
+        run: |
+          {
+            echo '```'
+            tar -tzf passkeyd.tar.gz | awk ' 
+              BEGIN { print "passkeyd-x86_64-unknown-linux-gnu.tar.gz" }
+              {
+                gsub(/\/$/, "", $0)
+
+                n = split($0, a, "/")
+                indent = ""
+                for(i=1;i<n;i++){
+                    indent = indent "│   "
+                }
+                print indent ubuntu"└── " a[n]
+              }'
+              echo '```' 
+          } | gh release create "${{ github.ref_name }}" passkeyd-x86_64-unknown-linux-gnu.tar.gz \
+              --title "Release ${{ github.ref_name }}" \
+              --notes-file -
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
