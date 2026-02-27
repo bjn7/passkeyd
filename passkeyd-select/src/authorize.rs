@@ -1,6 +1,6 @@
-use iced::widget::{column, row, text, text_input};
-use iced::{Alignment, Color, Element, Length};
-use passkeyd_share::title_bar_component;
+use iced::widget::{column, container, text, text_input};
+use iced::{Alignment, Element, Length, Padding};
+use passkeyd_share::{theme, title_bar_component};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -18,35 +18,34 @@ pub enum UserResponse {
 }
 
 impl AuthorizationUI {
-    // pub fn bootfn() -> (Self, Task<UserResponse>) {
-    //     (AuthorizationUI::default(), focus_next())
-    // }
-    pub fn view(&self) -> Element<'_, UserResponse> {
-        let title_bar = title_bar_component("Passkey login", UserResponse::Deny);
-        let description = text("Making sure it's you")
-            .color(Color::from_rgb(0.8, 0.8, 0.8))
-            .height(Length::Shrink)
-            .width(Length::Fill);
+    pub fn view(&self) -> Element<'_, UserResponse, theme::StylisedTheme> {
+        let title_bar = title_bar_component("Making sure it's you", UserResponse::Deny);
+        let description = text("Enter your passphrase to authorize this passkey request")
+            .class(theme::TextClass::SecondaryText)
+            .size(16);
 
-        let password = row![
+        let helper_text =
+            text("Authentication failed, try again.").class(theme::TextClass::ErrorText);
+
+        let password = container(column![
             text_input("Enter your passphrase", &self.password)
                 .on_submit(UserResponse::Authorize)
                 .secure(true)
                 .on_input(UserResponse::ContentChanged)
-        ]
-        .height(Length::Fill)
+                .padding(Padding::new(12.0))
+                .width(354),
+            self.is_invalid.then(|| helper_text)
+        ])
+        .height(Length::Fixed(110.))
+        .width(Length::Fill)
         .align_y(Alignment::Center)
-        .padding([0, 10]);
+        .align_x(Alignment::Center);
 
-        let helper_text =
-            text("Authentication failed, try again.").color(Color::from_rgb(0.5, 0., 0.));
-
-        let body = column![description, password, self.is_invalid.then(|| helper_text)]
-            .padding([20, 0])
-            .height(Length::Fill);
+        let body = column![description, password].height(Length::Fill);
 
         column![title_bar, body]
-            .padding([16, 16])
+            .spacing(16)
+            .padding([26, 26])
             .height(Length::Fill)
             .into()
     }

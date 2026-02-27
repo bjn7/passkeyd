@@ -8,3 +8,4 @@ bytes.workspace =true
 serde.workspace = true
 iced.workspace = true
 ctap-types.workspace = true
+toml = "1.0.3"

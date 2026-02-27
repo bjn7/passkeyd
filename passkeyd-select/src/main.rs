@@ -6,11 +6,12 @@ use std::{
 };
 
 use ctap_types::serde::cbor_deserialize;
-use iced::{Element, Task, Theme, widget::operation::focus_next, window::Settings};
+use iced::{Element, Task, widget::operation::focus_next, window::Settings};
 use pam::Client;
 use zeroize::Zeroize;
 
 use crate::{authorize::AuthorizationUI, select::SelectionUI};
+use passkeyd_share::theme;
 
 mod authorize;
 mod select;
@@ -82,7 +83,7 @@ impl StateMachine {
         }
     }
 
-    fn view(&self) -> Element<'_, MessageBridge> {
+    fn view(&self) -> Element<'_, MessageBridge, theme::StylisedTheme> {
         match &self.flow {
             Flow::Selecting(ui) => ui.view().map(MessageBridge::Selection),
             Flow::Authorizing(ui) => ui.view().map(MessageBridge::Authorization),
@@ -106,9 +107,18 @@ pub fn main() -> ExitCode {
             cbor_deserialize(&state_buffer).expect("Invalid cbor received");
 
         StateMachine {
-            authorized_idx: Rc::clone(&authorized_idx_clone),
+            authorized_idx: if selection_ui.other_uis.len() > 1 {
+                Rc::clone(&authorized_idx_clone)
+            } else {
+                *authorized_idx_clone.borrow_mut() = 1;
+                Rc::clone(&authorized_idx_clone)
+            },
             password: Rc::clone(&authorized_password_clone),
-            flow: Flow::Selecting(selection_ui),
+            flow: if selection_ui.other_uis.len() > 1 {
+                Flow::Selecting(selection_ui)
+            } else {
+                Flow::Authorizing(AuthorizationUI::default())
+            },
         }
     };
 
@@ -119,14 +129,14 @@ pub fn main() -> ExitCode {
             closeable: false,
             resizable: false,
             size: iced::Size {
-                width: 350.0,
-                height: 225.0,
+                width: 456.0,
+                height: 293.0,
             },
             level: iced::window::Level::AlwaysOnTop,
             ..Default::default()
         })
         .decorations(false)
-        .theme(|_state: &StateMachine| Theme::Dracula)
+        .theme(|_state: &StateMachine| theme::StylisedTheme::default())
         .run();
 
     let index = authorized_idx.borrow().clone();
@@ -154,4 +164,66 @@ fn write_output(authorized_index: usize, passphrase: &mut str) -> std::io::Resul
 
     passphrase.zeroize();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ctap_types::{serde::cbor_serialize, webauthn::PublicKeyCredentialRpEntity};
+    use passkeyd_share::OtherUI;
+    use std::{env, io::Write, path::PathBuf, process::Stdio};
+
+    #[test]
+    fn test_passkey_selection_process() {
+        let mut buffer = [0; 10000];
+        let other_ui = (0..=5)
+            .map(|idx| OtherUI {
+                site_icon: None,
+                user_icon: None,
+                user: ctap_types::webauthn::PublicKeyCredentialUserEntity {
+                    id: ctap_types::Bytes::from_slice(&[1u8; 64])
+                        .expect("Failed to create user ID"),
+                    icon: None,
+                    name: Some("Github".into()),
+                    display_name: Some(format!("acc-{idx}").as_str().into()),
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let authorization_ui = SelectionUI {
+            rp: PublicKeyCredentialRpEntity {
+                id: "github.com".into(),
+                name: Some("Github".into()),
+                icon: None,
+            },
+            other_uis: other_ui,
+        };
+        let serialized_data =
+            cbor_serialize(&authorization_ui, &mut buffer[..]).expect("Serialization failed");
+        let passkeyd_enroll_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/passkeyd-select");
+        let mut command = std::process::Command::new("systemd-run")
+            .arg(format!("--machine={}@", 1000))
+            .arg("--user")
+            .arg("--collect")
+            .arg("--wait")
+            .arg("--quiet")
+            .arg("--pipe")
+            .arg(passkeyd_enroll_path.as_os_str())
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn UI process. Are you root?");
+
+        {
+            let mut stdin = command.stdin.take().expect("Failed to get stdin");
+            stdin
+                .write_all(&serialized_data)
+                .expect("Failed to write data into pipe");
+        }
+
+        let result = command.wait().expect("Failed to collect UI response");
+        let exit_code = result.code().unwrap_or(1);
+
+        assert_eq!(exit_code, 0);
+    }
 }

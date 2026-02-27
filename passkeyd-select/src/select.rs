@@ -1,9 +1,9 @@
 use ctap_types::webauthn::PublicKeyCredentialRpEntity;
 use iced::widget::scrollable::Scrollbar;
-use iced::widget::{column, scrollable, text};
-use iced::{Color, Element, Length, Padding};
+use iced::widget::{Column, column, container, scrollable, text};
+use iced::{Alignment, Element, Length, Padding};
 
-use passkeyd_share::{OtherUI, title_bar_component};
+use passkeyd_share::{OtherUI, theme, title_bar_component};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -19,44 +19,58 @@ pub enum UserResponse {
 }
 
 impl SelectionUI {
-    pub fn view(&self) -> Element<'_, UserResponse> {
-        let title_bar = title_bar_component("Passkey login", UserResponse::Deny);
+    pub fn view(&self) -> Element<'_, UserResponse, theme::StylisedTheme> {
+        let title_bar = title_bar_component("Select Passkey", UserResponse::Deny);
 
         let description = text(format!(
             "The site {} is requesting to use a passkey.",
             self.rp.id.as_str(),
         ))
-        .color(Color::from_rgb(0.8, 0.8, 0.8))
+        .class(theme::TextClass::SecondaryText)
         .height(Length::Shrink)
         .width(Length::Fill);
 
-        let users_component: Vec<Element<'_, UserResponse>> = self
+        let users_component = self
             .other_uis
             .iter()
             .enumerate()
             .map(|(index, other_ui)| {
-                passkeyd_share::select_component(
+                passkeyd_share::user_component(
                     &self.rp,
                     other_ui,
                     Some(UserResponse::Authorize(index)),
                 )
-                .height(54)
                 .into()
             })
-            .collect::<Vec<_>>();
+            .collect::<Column<'_, UserResponse, _>>()
+            .spacing(4)
+            .padding(Padding {
+                top: 5.0,
+                ..Default::default()
+            });
 
-        let scrollable_users = scrollable(column(users_component).spacing(8).padding(Padding {
-            top: 5.0,
+        let scrollable_users = container(
+            scrollable(
+                container(users_component)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .direction(scrollable::Direction::Vertical(Scrollbar::new()))
+            .height(Length::Fill)
+            .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .padding(Padding {
+            right: 24.,
             ..Default::default()
-        }))
-        .direction(scrollable::Direction::Vertical(Scrollbar::new()))
-        .height(Length::Fill);
-
+        });
         // let users = passkeyd_share::get_select_component(&self.rp, &self.other_uis, None);
         // let x = users_component.remove(0);
         // let y = users_component.remove(0);
+        let spacing = 16;
         let body = column![description, scrollable_users]
-            .padding([20, 0])
+            .spacing(18)
             .height(Length::Fill);
         // let approve = button("Authorize").on_press(UserResponse::Authorize);
 
@@ -65,7 +79,8 @@ impl SelectionUI {
         //     .padding([0, 30]);
 
         column![title_bar, body]
-            .padding([16, 16])
+            .spacing(spacing)
+            .padding([26, 26])
             .height(Length::Fill)
             .into()
     }

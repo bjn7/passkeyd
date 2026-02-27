@@ -4,11 +4,11 @@ use std::sync::atomic::AtomicBool;
 
 use ctap_types::serde::cbor_deserialize;
 use ctap_types::webauthn::PublicKeyCredentialRpEntity;
-use iced::widget::{Space, button, column, row, text};
+use iced::widget::{button, column, text};
 use iced::window::Settings;
-use iced::{Alignment, Color, Element, Length, Task, Theme};
+use iced::{Alignment, Element, Length, Task};
 
-use passkeyd_share::{OtherUI, title_bar_component};
+use passkeyd_share::{OtherUI, theme, title_bar_component};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -34,15 +34,17 @@ impl AuthorizationUI {
     }
 
     fn update(&mut self, msg: UserResponse) -> Task<UserResponse> {
-        if matches!(msg, UserResponse::Authorize) {
-            IS_AUTHORIZED.store(true, std::sync::atomic::Ordering::SeqCst);
-            return iced::exit();
-        };
-        Task::none()
+        match msg {
+            UserResponse::Authorize => {
+                IS_AUTHORIZED.store(true, std::sync::atomic::Ordering::SeqCst);
+                return iced::exit();
+            }
+            UserResponse::Deny => iced::exit(),
+        }
     }
 
-    fn view(&self) -> Element<'_, UserResponse> {
-        let title_bar = title_bar_component("hello", UserResponse::Deny);
+    fn view(&self) -> Element<'_, UserResponse, theme::StylisedTheme> {
+        let title_bar = title_bar_component("Create Passkey", UserResponse::Deny);
 
         let description = if let Some(dname) = &self.other_ui.user.display_name {
             text(format!(
@@ -68,20 +70,38 @@ impl AuthorizationUI {
                 self.rp.id.as_str(),
             ))
         }
-        .color(Color::from_rgb(0.8, 0.8, 0.8))
+        .class(theme::TextClass::SecondaryText)
         .size(16);
 
-        let site = passkeyd_share::select_component(&self.rp, &self.other_ui, None)
-            .align_y(Alignment::Center)
-            .height(Length::Fill);
-        let body = column![description, site].padding([20, 0]);
-        let approve = button("Authorize").on_press(UserResponse::Authorize);
+        let site = column![passkeyd_share::user_component(
+            &self.rp,
+            &self.other_ui,
+            None
+        )]
+        .align_x(Alignment::Center)
+        .width(Length::Fill);
 
-        let footer = row![Space::new().width(Length::Fill), approve]
-            .width(Length::Fill)
-            .padding([0, 30]);
+        let component_spacing = 18;
+        let body = column![description, site].spacing(component_spacing);
 
-        column![title_bar, body, footer].padding([16, 16]).into()
+        let approve = button(
+            text("Authorize")
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .height(Length::Fixed(24.))
+                .line_height(1.),
+        )
+        .class(theme::ButtonClass::Approval)
+        .width(Length::Fill)
+        .on_press(UserResponse::Authorize);
+
+        let footer = column![approve].width(Length::Fill);
+
+        column![title_bar, body, footer]
+            .spacing(component_spacing)
+            .padding([26, 36])
+            .into()
     }
 }
 
@@ -97,14 +117,14 @@ pub fn main() -> ExitCode {
         closeable: false,
         resizable: false,
         size: iced::Size {
-            width: 450.0,
-            height: 250.0,
+            width: 474.0,
+            height: 294.0,
         },
         level: iced::window::Level::AlwaysOnTop,
         ..Default::default()
     })
     .decorations(false)
-    .theme(|_state: &AuthorizationUI| Theme::Dracula)
+    .theme(|_state: &AuthorizationUI| theme::StylisedTheme::default())
     .run();
 
     let is_auth = IS_AUTHORIZED.load(std::sync::atomic::Ordering::SeqCst);
@@ -117,38 +137,36 @@ pub fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-
-    use std::{io::Write, process::Stdio};
-
-    use ctap_types::serde::cbor_serialize;
-
     use super::*;
+    use ctap_types::serde::cbor_serialize;
+    use std::{env, io::Write, path::PathBuf, process::Stdio};
 
     #[test]
-    fn test() {
-        let mut bufferrrr = [0; 10000];
-        let otherui = OtherUI {
+    fn test_enrollment_process() {
+        let mut buffer = [0; 10000];
+        let other_ui = OtherUI {
             site_icon: None,
             user_icon: None,
             user: ctap_types::webauthn::PublicKeyCredentialUserEntity {
-                id: ctap_types::Bytes::from_slice(&[1u8; 64]).expect(""),
+                id: ctap_types::Bytes::from_slice(&[1u8; 64]).expect("Failed to create user ID"),
                 icon: None,
-                name: Some("test".into()),
-                display_name: Some("hello".into()),
+                name: Some("Github".into()),
+                display_name: Some("space90".into()),
             },
         };
 
-        let values = AuthorizationUI {
-            other_ui: otherui,
+        let authorization_ui = AuthorizationUI {
+            other_ui,
             rp: PublicKeyCredentialRpEntity {
                 id: "github.com".into(),
-                name: Some("github".into()),
+                name: Some("Github".into()),
                 icon: None,
             },
         };
-        let x = cbor_serialize(&values, &mut bufferrrr[..]).expect("");
-
-        // debug!("spawning ui");
+        let serialized_data =
+            cbor_serialize(&authorization_ui, &mut buffer[..]).expect("Serialization failed");
+        let passkeyd_enroll_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/debug/passkeyd-enroll");
         let mut command = std::process::Command::new("systemd-run")
             .arg(format!("--machine={}@", 1000))
             .arg("--user")
@@ -156,22 +174,21 @@ mod tests {
             .arg("--wait")
             .arg("--quiet")
             .arg("--pipe")
-            // .env("SYSTEMD_LOG_LEVEL", "debug")
-            .arg(format!(
-                "/home/stranger/Code/passkey/target/debug/{}",
-                "passkeyd-enroll"
-            ))
-            // .arg("/usr/lib/passkeyd/passkeyd-enroll")
+            .arg(passkeyd_enroll_path.as_os_str())
             .stdin(Stdio::piped())
             .spawn()
-            .expect("Failed to spawn UI, are you root?");
+            .expect("Failed to spawn UI process. Are you root?");
 
         {
             let mut stdin = command.stdin.take().expect("Failed to get stdin");
-            stdin.write_all(&x).expect("Failed to write into pipe");
+            stdin
+                .write_all(&serialized_data)
+                .expect("Failed to write data into pipe");
         }
-        let result = command.wait().expect("failed to collect ui response");
-        let g = result.code().unwrap_or(1);
-        assert_eq!(g, 0)
+
+        let result = command.wait().expect("Failed to collect UI response");
+        let exit_code = result.code().unwrap_or(1);
+
+        assert_eq!(exit_code, 0);
     }
 }
