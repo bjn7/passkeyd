@@ -52,7 +52,7 @@ A passkey can be configured via `/etc/passkeyd.conf`. Only the user's UUID menti
 
 ```env
 GUI_UID=1000   # The UID of the user allowed to run GUI components (typically a normal desktop user)
-RUST_LOG=info  # Sets the logging level for Rust components
+RUST_LOG=info  # logging level for passkeyd
 
 # Advanced option: The front-end UI for selecting a passkey
 FRONT_ENROLL=passkeyd-enroll
