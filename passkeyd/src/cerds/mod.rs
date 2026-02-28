@@ -24,13 +24,29 @@ pub enum UI {
 }
 
 impl UI {
+    #[allow(unused)]
     fn as_str_path(&self, config: &Config) -> String {
-        match (self, cfg!(debug_assertions)) {
-            (UI::KeyEnroll, true) => "/home/sth/passkey/target/debug/passkeyd-enroll".into(), //for dev
-            (UI::KeyEnroll, false) => format!("/usr/lib/passkeyd/{}", config.front_enroll.as_str()),
+        #[cfg(debug_assertions)]
+        {
+            use std::{env, path::Path};
+            let target_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../target/debug")
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            match self {
+                UI::KeyEnroll => format!("{target_dir}/{}", "passkeyd-enroll"),
+                UI::KeySelect => format!("{target_dir}/{}", "passkeyd-select"),
+            }
+        }
 
-            (UI::KeySelect, true) => "/home/sth/passkey/target/debug/passkeyd-select".into(), //for dev
-            (UI::KeySelect, false) => format!("/usr/lib/passkeyd/{}", config.front_select.as_str()),
+        #[cfg(not(debug_assertions))]
+        {
+            match self {
+                UI::KeyEnroll => format!("/usr/lib/passkeyd/{}", config.front_enroll.as_str()),
+                UI::KeySelect => format!("/usr/lib/passkeyd/{}", config.front_select.as_str()),
+            }
         }
     }
 }

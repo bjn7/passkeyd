@@ -23,7 +23,7 @@ pub fn collect_all_packet(
         match ctaphid_packet {
             Packet::Continuation(continuation_packet) => {
                 let channel_payload = ctaphid
-                    .payload_manager
+                    .payload_stack
                     .get_mut(&continuation_packet.channel.into())
                     .ok_or_else(|| {
                         error!("Invalid channel received: {}", continuation_packet.channel);

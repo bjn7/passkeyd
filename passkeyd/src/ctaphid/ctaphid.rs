@@ -10,7 +10,7 @@ use crate::ctaphid::{
     utils::{collect_all_packet, device_err_into_bytes, generate_new_cid},
 };
 
-use log::debug;
+use log::{debug, error};
 
 use super::hid;
 
@@ -26,7 +26,8 @@ pub struct Ctaphid {
     pub hid: hid::UHIDDevice<File>,
     // no need to free the channels, a average of 500 channels will be stored before getting wiped out by shutdown or restart.
     // todo!(): actually, once hit every 100 channels, drop 50 channels, so, it can maintain 100 channels.
-    pub payload_manager: HashMap<HashableChannel, ChannelPayload>,
+    pub payload_stack: HashMap<HashableChannel, ChannelPayload>,
+    // pub chancelled_channels: Vec<Channel>,
 }
 
 impl Ctaphid {
@@ -35,7 +36,7 @@ impl Ctaphid {
 
         Self {
             hid: hid::create_hid().expect("Failed to create HID, are you root?"),
-            payload_manager: HashMap::with_capacity(10),
+            payload_stack: HashMap::with_capacity(10),
         }
     }
 
@@ -55,7 +56,7 @@ impl Ctaphid {
             Packet::Initialization(mut init_packet) => {
                 debug!("Received initialization payload.");
 
-                self.payload_manager.insert(
+                self.payload_stack.insert(
                     init_packet.channel.into(),
                     ChannelPayload {
                         data: Vec::with_capacity(init_packet.length as usize),
@@ -64,7 +65,7 @@ impl Ctaphid {
                 );
 
                 let channel_payload = self
-                    .payload_manager
+                    .payload_stack
                     .get_mut(&init_packet.channel.clone().into())
                     .unwrap();
 
@@ -87,7 +88,7 @@ impl Ctaphid {
                 }
 
                 let completed_payload = self
-                    .payload_manager
+                    .payload_stack
                     .remove(&init_packet.channel.into())
                     .unwrap();
 
@@ -113,11 +114,19 @@ impl Ctaphid {
         debug!("Received command {:?}", command);
         match command {
             Command::Ping => {
-                todo!()
+                self.send_response(channel, Command::Ping, data)?;
             }
-            Command::Cancel => todo!(),
-            Command::Cbor => Ok(Some((channel, data))),
-            Command::Error => todo!(),
+            // ignore all cancel request.
+            Command::Cancel => (),
+            Command::Cbor => {
+                return Ok(Some((channel, data)));
+            }
+            Command::Error => {
+                error!(
+                    "Communicator channel {}, is reporting an error with a payload: {:?}",
+                    channel, data
+                );
+            }
             Command::Init => {
                 // if self.channel.is_some() {
                 //     self.send_error(channel, DeviceError::ChannelBusy)?;
@@ -138,7 +147,7 @@ impl Ctaphid {
                     // According to spec, "If set to 1, authenticator DOES NOT implement CTAPHID_MSG function"
                     // as, it doesn't support NMSG, it is set to 1.
                     // though, it looks counter intuitive compared to other capabilitites.
-                    capabilities: Capabilities::WINK | Capabilities::CBOR | Capabilities::NMSG,
+                    capabilities: Capabilities::CBOR | Capabilities::NMSG,
                     rest: [0u8; 0],
                 };
 
@@ -158,11 +167,16 @@ impl Ctaphid {
                 self.hid.write(&report)?;
 
                 debug!("Acknowledged {:?}", command);
-
-                Ok(None)
             }
-            Command::KeepAlive => todo!(),
-            Command::Lock => todo!(),
+            // This command code is sent while processing a CTAPHID_MSG.
+            // Since it doesn't use legacy MSG and instead uses CTAP, it must be unreachable.
+
+            // If it is reached, it means Chromium fallbacked to the legacy nmsg due to an error in CTAP communication.
+            // However, even with the fallback, it won't be reached.
+            Command::KeepAlive => unreachable!(),
+            Command::Lock => {
+                self.send_64response(channel, Command::Lock, &[])?;
+            }
             Command::Message => {
                 // let p = InitializationPacket {
                 //     channel: self.channel.unwrap(),
@@ -171,16 +185,15 @@ impl Ctaphid {
                 //     length: 0,
                 // }
                 self.send_64response(channel, Command::Unknown(0x83), &[0x6D, 0x00])?;
-                Ok(None)
             }
-            Command::Unknown(_) => todo!(),
-            Command::Vendor(_) => todo!(),
+            Command::Unknown(_) => unimplemented!(),
+            Command::Vendor(_) => unimplemented!(),
             Command::Wink => {
                 self.send_64response(channel, Command::Wink, &[])?;
-                debug!("Acknowledged {:?}", command);
-                Ok(None)
             }
         }
+        debug!("Acknowledged {:?}", command);
+        Ok(None)
     }
 
     pub fn send_64response<T: AsRef<[u8]>>(

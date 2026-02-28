@@ -2,7 +2,7 @@ use super::{spawn_ui, translate_es256_to_der};
 use crate::config::Config;
 use crate::ctaphid::CtapStatus;
 use crate::database::layout::{Cose, OtherUI, Passkey, encode_cose_es256, encode_cose_rs256};
-use crate::tpm;
+use crate::{database, tpm};
 use ctap_types::Bytes;
 use ctap_types::ctap2::AttestationStatement;
 use ctap_types::ctap2::AttestationStatementFormat;
@@ -25,6 +25,21 @@ use sha2::Digest;
 pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
     // https://source.chromium.org/chromium/chromium/src/+/main:device/fido/make_credential_task.cc;drc=eb40dba9a062951578292de39424d7479f723463;l=66
     // todo!(): handle .dummy request from chromium.
+
+    if let (Some(exclude_list), Some((_, passkeys))) =
+        (req.exclude_list, database::get_passkeys(&req.rp))
+    {
+        let exists = exclude_list.iter().any(|desc| {
+            passkeys
+                .iter()
+                .any(|key| *desc.id == key.credential_source.id)
+        });
+
+        if exists {
+            // optional todo!: asking for user presence using passkey selection before proceeding
+            anyhow::bail!(CtapStatus::CredentialExcluded);
+        }
+    }
 
     let mut ctx = tpm::initialize_tpm_with_session()?;
     let srk_key_handle = tpm::create_primary_key_handle(&mut ctx)?;

@@ -92,17 +92,18 @@ impl Passkey {
                 .map(|x| Bytes::from_owner(x));
         };
 
-        if let Some(site_icon_url) = &other_ui.user.icon {
-            let result = ureq::get(site_icon_url.as_str())
-                .config()
-                .timeout_global(Some(Duration::from_secs(5)))
-                .build()
-                .call()
-                .ok();
-            other_ui.site_icon = result
-                .and_then(|mut x| x.body_mut().read_to_vec().ok())
-                .map(|x| Bytes::from_owner(x));
-        };
+        other_ui.site_icon = None;
+        // if let Some(site_icon_url) = &other_ui.user.icon {
+        //     let result = ureq::get(site_icon_url.as_str())
+        //         .config()
+        //         .timeout_global(Some(Duration::from_secs(5)))
+        //         .build()
+        //         .call()
+        //         .ok();
+        //     other_ui.site_icon = result
+        //         .and_then(|mut x| x.body_mut().read_to_vec().ok())
+        //         .map(|x| Bytes::from_owner(x));
+        // };
 
         let source = CredentialSource {
             id: credential_id,

@@ -3,7 +3,7 @@ members = [
     "passkeyd",
     "passkeyd-share",
     "passkeyd-enroll",
-    "passkeyd-select"
+    "passkeyd-select",
     ]
 resolver = "3"
 

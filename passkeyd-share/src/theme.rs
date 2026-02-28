@@ -1,4 +1,4 @@
-use std::{env, fs, process::exit};
+use std::{fs, process::exit};
 
 use iced::{
     Border, Color, Shadow, Vector,
