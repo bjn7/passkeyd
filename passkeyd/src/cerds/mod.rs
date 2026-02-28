@@ -1,82 +1,12 @@
-use crate::config::Config;
-use ctap_types::serde::cbor_serialize_to;
-use der::{Encode, Sequence, asn1::UintRef};
-use log::debug;
-use serde::Serialize;
-use std::{
-    io::Write,
-    process::{Child, Stdio},
-};
-
-use super::utils::CborVec;
+pub mod get;
+pub mod make;
 
 pub const ALGO_ES256: i32 = -7;
 // pub const ALGO_EDDSA: i32 = -8; (isn't support by tpm)
 pub const ALGO_RS256: i32 = -257;
 
-pub mod get;
-pub mod make;
-
-// UTILITY
-pub enum UI {
-    KeyEnroll,
-    KeySelect,
-}
-
-impl UI {
-    #[allow(unused)]
-    fn as_str_path(&self, config: &Config) -> String {
-        #[cfg(debug_assertions)]
-        {
-            use std::{env, path::Path};
-            let target_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../target/debug")
-                .canonicalize()
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
-            match self {
-                UI::KeyEnroll => format!("{target_dir}/{}", "passkeyd-enroll"),
-                UI::KeySelect => format!("{target_dir}/{}", "passkeyd-select"),
-            }
-        }
-
-        #[cfg(not(debug_assertions))]
-        {
-            match self {
-                UI::KeyEnroll => format!("/usr/lib/passkeyd/{}", config.front_enroll.as_str()),
-                UI::KeySelect => format!("/usr/lib/passkeyd/{}", config.front_select.as_str()),
-            }
-        }
-    }
-}
-
-// Util function
-pub fn spawn_ui<State>(config: &Config, ui: UI, state: State) -> Child
-where
-    State: Serialize,
-{
-    let mut state_buffer = CborVec::new();
-    let cbor = cbor_serialize_to(&state, &mut state_buffer).unwrap();
-    debug!("Spawning ui");
-    let mut command = std::process::Command::new("systemd-run")
-        .arg(format!("--machine={}@", config.gui_uid))
-        .arg("--user")
-        .arg("--collect")
-        .arg("--wait")
-        .arg("--quiet")
-        .arg("--pipe")
-        .arg(ui.as_str_path(config))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn UI, are you root?");
-    let mut stdin = command.stdin.take().expect("Failed to get stdin");
-    stdin
-        .write_all(&state_buffer.0[..cbor])
-        .expect("Failed to write into pipe");
-    return command;
-}
+// util function
+use der::{Encode, Sequence, asn1::UintRef};
 
 #[derive(Sequence)]
 struct EcdsaSignature<'a> {

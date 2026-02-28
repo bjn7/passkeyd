@@ -170,7 +170,7 @@ fn write_output(authorized_index: usize, passphrase: &mut str) -> std::io::Resul
 mod tests {
     use super::*;
     use ctap_types::{serde::cbor_serialize, webauthn::PublicKeyCredentialRpEntity};
-    use passkeyd_share::OtherUI;
+    use passkeyd_share::database::layout::OtherUI;
     use std::{env, io::Write, path::PathBuf, process::Stdio};
 
     #[test]

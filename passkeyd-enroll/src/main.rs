@@ -8,10 +8,11 @@ use iced::widget::{button, column, text};
 use iced::window::Settings;
 use iced::{Alignment, Element, Length, Task};
 
-use passkeyd_share::{OtherUI, theme, title_bar_component};
+use passkeyd_share::{component, theme};
+use passkeyd_share::{component::title_bar_component, database::layout::OtherUI};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct AuthorizationUI {
     pub rp: PublicKeyCredentialRpEntity,
     pub other_ui: OtherUI,
@@ -73,13 +74,9 @@ impl AuthorizationUI {
         .class(theme::TextClass::SecondaryText)
         .size(16);
 
-        let site = column![passkeyd_share::user_component(
-            &self.rp,
-            &self.other_ui,
-            None
-        )]
-        .align_x(Alignment::Center)
-        .width(Length::Fill);
+        let site = column![component::user_component(&self.rp, &self.other_ui, None)]
+            .align_x(Alignment::Center)
+            .width(Length::Fill);
 
         let component_spacing = 18;
         let body = column![description, site].spacing(component_spacing);
@@ -139,6 +136,7 @@ pub fn main() -> ExitCode {
 mod tests {
     use super::*;
     use ctap_types::serde::cbor_serialize;
+    use passkeyd_share::database::layout::OtherUI;
     use std::{env, io::Write, path::PathBuf, process::Stdio};
 
     #[test]

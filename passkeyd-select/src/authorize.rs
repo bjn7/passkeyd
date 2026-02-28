@@ -1,6 +1,6 @@
 use iced::widget::{column, container, text, text_input};
 use iced::{Alignment, Element, Length, Padding};
-use passkeyd_share::{theme, title_bar_component};
+use passkeyd_share::{component::title_bar_component, theme};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Default, Clone)]

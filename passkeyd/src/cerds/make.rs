@@ -1,8 +1,6 @@
-use super::{spawn_ui, translate_es256_to_der};
-use crate::config::Config;
+use super::translate_es256_to_der;
 use crate::ctaphid::CtapStatus;
-use crate::database::layout::{Cose, OtherUI, Passkey, encode_cose_es256, encode_cose_rs256};
-use crate::{database, tpm};
+use crate::tpm;
 use ctap_types::Bytes;
 use ctap_types::ctap2::AttestationStatement;
 use ctap_types::ctap2::AttestationStatementFormat;
@@ -16,6 +14,14 @@ use ctap_types::ctap2::make_credential::Response;
 use ctap_types::ctap2::make_credential::ResponseBuilder;
 use ctap_types::webauthn;
 use ctap_types::webauthn::PublicKeyCredentialRpEntity;
+use passkeyd_share::config::Config;
+use passkeyd_share::database;
+use passkeyd_share::database::layout::{OtherUI, Passkey};
+use passkeyd_share::utils::Cose;
+use passkeyd_share::utils::UI;
+use passkeyd_share::utils::encode_cose_es256;
+use passkeyd_share::utils::encode_cose_rs256;
+use passkeyd_share::utils::spawn_ui;
 use serde::Serialize;
 
 use super::{ALGO_ES256, ALGO_RS256};
@@ -183,7 +189,7 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
         other_ui: &passkey.credential_source.other_ui,
     };
 
-    let mut ui = spawn_ui(config, crate::cerds::UI::KeyEnroll, ui_state);
+    let mut ui = spawn_ui(config, UI::KeyEnroll, ui_state);
     let result = ui.wait().expect("failed to collect ui response");
     if result.code().unwrap_or_default() != 0 {
         info!("Authorization denied");

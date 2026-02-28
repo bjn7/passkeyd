@@ -3,15 +3,13 @@ use ctap_types::ctap2::{Request, get_info};
 use ctap_types::serde::{cbor_serialize, cbor_serialize_to};
 use ctaphid_types::Command;
 use log::{debug, error};
+use passkeyd_share::config;
 
 use crate::ctaphid::CtapStatus;
 
 mod cerds;
-mod config;
 mod ctaphid;
-mod database;
 mod tpm;
-mod utils;
 
 fn main() -> anyhow::Result<()> {
     let config = config::Config::initialize()?;

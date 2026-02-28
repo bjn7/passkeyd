@@ -3,10 +3,10 @@ use iced::widget::scrollable::Scrollbar;
 use iced::widget::{Column, column, container, scrollable, text};
 use iced::{Alignment, Element, Length, Padding};
 
-use passkeyd_share::{OtherUI, theme, title_bar_component};
+use passkeyd_share::{component::title_bar_component, database::layout::OtherUI, theme};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct SelectionUI {
     pub rp: PublicKeyCredentialRpEntity,
     pub other_uis: Vec<OtherUI>,
@@ -35,7 +35,7 @@ impl SelectionUI {
             .iter()
             .enumerate()
             .map(|(index, other_ui)| {
-                passkeyd_share::user_component(
+                passkeyd_share::component::user_component(
                     &self.rp,
                     other_ui,
                     Some(UserResponse::Authorize(index)),

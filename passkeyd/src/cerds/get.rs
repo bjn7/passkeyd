@@ -13,15 +13,14 @@ use pam::Client;
 use serde::Serialize;
 use sha2::Digest;
 
-use crate::{
-    cerds::{spawn_ui, translate_es256_to_der},
+use crate::{cerds::translate_es256_to_der, ctaphid::CtapStatus, tpm};
+
+use passkeyd_share::{
     config::Config,
-    ctaphid::CtapStatus,
     database::{
         get_passkeys,
         layout::{OtherUI, Passkey},
-    },
-    tpm,
+    }, utils::{UI, spawn_ui},
 };
 
 pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
@@ -71,7 +70,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
             .collect::<Vec<_>>(),
     };
 
-    let ui = spawn_ui(config, crate::cerds::UI::KeySelect, ui_state);
+    let ui = spawn_ui(config, UI::KeySelect, ui_state);
     let result = ui
         .wait_with_output()
         .expect("failed to collect ui response");

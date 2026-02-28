@@ -22,3 +22,4 @@ ureq = "3.2.0"
 bytes = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features=["derive"] }
 pam.workspace = true
+passkeyd-share = { path = "../passkeyd-share" }
