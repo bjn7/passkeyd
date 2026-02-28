@@ -9,6 +9,7 @@ use std::{collections::HashMap, fs};
 // Assuming the malware is also underprivileged, if it has higher privileges, well, well.
 // If someone is dumb enough to run random stuff with privileges, they should just to Windows with windows defender turned on.
 
+#[derive(Debug)]
 pub struct Config {
     pub gui_uid: u32, // UID to create a under privilege child, to prevent GUI from running as root
     #[allow(unused)]
@@ -26,8 +27,9 @@ impl Config {
         let content = fs::read_to_string(PASSKEY_CONFIG_PATH)?;
         let config = content
             .lines()
-            .filter(|line| line.is_empty() || line.trim_start().starts_with("#"))
+            .filter(|line| !line.trim_start().is_empty() || !line.trim_start().starts_with("#"))
             .filter_map(|line| {
+                let line = line.splitn(2, "#").next().unwrap_or("");
                 let mut parts = line.splitn(2, "=");
                 Some((
                     parts.next()?.trim().to_string(),

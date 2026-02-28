@@ -49,10 +49,7 @@ impl Default for StylisedTheme {
         let contents = fs::read_to_string("/usr/share/passkeyd/theme.conf").unwrap();
         match toml::from_str(&contents) {
             Ok(theme) => theme,
-            Err(e) => {
-                eprintln!("{e}");
-                exit(2)
-            }
+            Err(_) => exit(2),
         }
     }
 }
@@ -65,13 +62,7 @@ impl Base for StylisedTheme {
         }
     }
     fn default(_preference: theme::Mode) -> Self {
-        let homedir = env::home_dir().unwrap(); //let it panic.
-        let config_path = homedir.join(".config/passkeyd/theme.conf");
-        let contents = fs::read_to_string(config_path).unwrap();
-        match toml::from_str(&contents) {
-            Ok(theme) => theme,
-            Err(_) => exit(2),
-        }
+        <StylisedTheme as std::default::Default>::default()
     }
     fn mode(&self) -> theme::Mode {
         theme::Mode::None
