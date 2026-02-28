@@ -50,18 +50,18 @@ sudo systemctl start passkeyd
 
 A passkey can be configured via `/etc/passkeyd.conf`. Only the user's UUID mentioned in the passkeyd configuration file can authorize the request.
 
-```conf
+```env
 GUI_UID=1000   # The UID of the user allowed to run GUI components (typically a normal desktop user)
 RUST_LOG=info  # Sets the logging level for Rust components
 
 # Advanced option: The front-end UI for selecting a passkey
-passkeyd-enroll=passkeyd-enroll
+FRONT_ENROLL=passkeyd-enroll
 
 # Advanced option: The front-end UI for for passkey creation
-passkeyd-select=passkeyd-select
+FRONT_SELECT=passkeyd-select
 
 # Advanced option: The front-end UI for verifying the user's presence.
-passkeyd-selection=passkeyd-selection
+FRONT_SELECTION=passkeyd-selection
 ```
 
 ### Passkeyd UI Custom Theme
