@@ -36,7 +36,6 @@ aura -A passkeyd
 
 ```bash
 sudo systemctl start passkeyd
-
 ```
 
 #### Testing the Passkey Authentication
@@ -47,7 +46,48 @@ sudo systemctl start passkeyd
 4. Click Sign in. A popup will appear, select the recently added account "Test".
 5. A passphrase popup will appear, Enter your logged-in Linux user passphrase.
 
-The UI is a bit wonky and needs some polish. Customization features are coming soon.
+### Passkeyd Config
+
+A passkey can be configured via `/etc/passkeyd.conf`. Only the user's UUID mentioned in the passkeyd configuration file can authorize the request.
+
+```toml
+GUI_UID=1000   # The UID of the user allowed to run GUI components (typically a normal desktop user)
+RUST_LOG=info  # Sets the logging level for Rust components
+
+# Advanced option: The front-end UI for selecting a passkey
+passkeyd-enroll=passkeyd-enroll
+
+# Advanced option: The front-end UI for for passkey creation
+passkeyd-select=passkeyd-select
+
+# Advanced option: The front-end UI for verifying the user's presence.
+passkeyd-selection=passkeyd-selection
+```
+
+### Passkeyd UI Custom Theme
+
+By default passkeyd uses `passkeyd-enroll`, `passkeyd-select` and `passkeyd-selection` for the front-end user interface, the config for theme can be found at `/usr/share/passkeyd/theme.conf`
+
+```toml
+# Format: [r, g, b, a]
+# Each value must be between 0-255.
+# 'r' represents the red channel
+# 'g' represents the green channel
+# 'b' represents the blue channel
+# 'a' represents the alpha channel, which determines the transparency of the color.
+
+background = [36, 37, 50, 255]  # Background color (dark shade)
+primary_text = [255, 255, 255, 255]  # Primary text color (for title, approval buttons)
+secondary_text = [230, 230, 230, 255]  # Secondary text color (for descriptions)
+surface = [45, 40, 60, 255]  # Surface color (used for elevated surfaces)
+surface_primary_text = [236, 217, 217, 255]  # Text color for site name within elevated surfaces
+surface_secondary_text = [236, 217, 217, 255]  # Text color for site username within elevated surfaces
+accent = [160, 135, 255, 255]  # Accent color (used for button backgrounds)
+scrollbar_track = [115, 115, 115, 25]  # Scrollbar track color (background of the scrollbar)
+scrollbar_thumb = [80, 80, 80, 90]  # Scrollbar thumb color (movable part of the scrollbar)
+```
+
+The UI front-end can be swapped and is fully customizable For more information about creating your own custom UI, head to [Custom UI Frontend](https://github.com/bjn7/passkeyd/wiki/Custom-UI-Frontend)
 
 ### Alternatives
 

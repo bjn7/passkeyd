@@ -46,9 +46,7 @@ pub struct StylisedTheme {
 
 impl Default for StylisedTheme {
     fn default() -> Self {
-        let homedir = env::home_dir().unwrap(); //let it panic.
-        let config_path = homedir.join(".config/passkeyd/theme.conf");
-        let contents = fs::read_to_string(config_path).unwrap();
+        let contents = fs::read_to_string("/usr/share/passkeyd/theme.conf").unwrap();
         match toml::from_str(&contents) {
             Ok(theme) => theme,
             Err(e) => {

@@ -24,13 +24,17 @@ pub enum UI {
 }
 
 impl UI {
-    fn as_str_path(&self) -> &str {
+    fn as_str_path(&self, config: &Config) -> String {
         match (self, cfg!(debug_assertions)) {
-            (UI::KeyEnroll, true) => "/home/stranger/Code/passkey/target/debug/passkeyd-enroll", //for dev
-            (UI::KeyEnroll, false) => "/usr/lib/passkeyd/passkeyd-enroll",
+            (UI::KeyEnroll, true) => {
+                "/home/stranger/Code/passkey/target/debug/passkeyd-enroll".into()
+            } //for dev
+            (UI::KeyEnroll, false) => format!("/usr/lib/passkeyd/{}", config.front_enroll.as_str()),
 
-            (UI::KeySelect, true) => "/home/stranger/Code/passkey/target/debug/passkeyd-select", //for dev
-            (UI::KeySelect, false) => "/usr/lib/passkeyd/passkeyd-select",
+            (UI::KeySelect, true) => {
+                "/home/stranger/Code/passkey/target/debug/passkeyd-select".into()
+            } //for dev
+            (UI::KeySelect, false) => format!("/usr/lib/passkeyd/{}", config.front_select.as_str()),
         }
     }
 }
@@ -50,7 +54,7 @@ where
         .arg("--wait")
         .arg("--quiet")
         .arg("--pipe")
-        .arg(ui.as_str_path())
+        .arg(ui.as_str_path(config))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

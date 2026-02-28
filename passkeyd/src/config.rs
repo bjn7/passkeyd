@@ -13,6 +13,10 @@ pub struct Config {
     pub gui_uid: u32, // UID to create a under privilege child, to prevent GUI from running as root
     #[allow(unused)]
     pub rust_log: String,
+    pub front_enroll: String,
+    pub front_select: String,
+    #[allow(unused)]
+    pub front_selection: String,
 }
 
 const PASSKEY_CONFIG_PATH: &str = "/etc/passkeyd.conf";
@@ -48,6 +52,26 @@ impl Config {
             std::env::set_var("RUST_LOG", &rust_log);
         }
         env_logger::init();
-        Ok(Config { gui_uid, rust_log })
+
+        let front_enroll = config
+            .get("FRONT_ENROLL")
+            .unwrap_or(&"passkeyd-enroll".to_string())
+            .to_owned();
+        let front_select = config
+            .get("FRONT_SELECT")
+            .unwrap_or(&"passkeyd-select".to_string())
+            .to_owned();
+        let front_selection = config
+            .get("FRONT_SELECTION")
+            .unwrap_or(&"passkeyd-selection".to_string())
+            .to_owned();
+
+        Ok(Config {
+            gui_uid,
+            rust_log,
+            front_enroll,
+            front_select,
+            front_selection,
+        })
     }
 }
