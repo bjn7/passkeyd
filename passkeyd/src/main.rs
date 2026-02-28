@@ -1,15 +1,9 @@
-use ctap_types;
+use crate::ctaphid::CtapStatus;
 use ctap_types::ctap2::{Request, get_info};
 use ctap_types::serde::{cbor_serialize, cbor_serialize_to};
 use ctaphid_types::Command;
 use log::{debug, error};
 use passkeyd_share::config;
-
-use crate::ctaphid::CtapStatus;
-
-mod cerds;
-mod ctaphid;
-mod tpm;
 
 fn main() -> anyhow::Result<()> {
     let config = config::Config::initialize()?;
@@ -117,3 +111,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 }
+
+mod cerds;
+mod ctaphid;
+mod tpm;

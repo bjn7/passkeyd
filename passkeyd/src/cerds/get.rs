@@ -1,27 +1,21 @@
 use std::mem::MaybeUninit;
 
-use ctap_types::{
-    Bytes,
-    ctap2::{
-        AuthenticatorDataFlags,
-        get_assertion::{self, Request, Response, ResponseBuilder},
-    },
-    webauthn::PublicKeyCredentialRpEntity,
-};
+use ctap_types::ctap2::AuthenticatorDataFlags;
+use ctap_types::ctap2::get_assertion::{AuthenticatorData, Request, Response, ResponseBuilder};
+use ctap_types::{Bytes, webauthn::PublicKeyCredentialRpEntity};
 use log::{error, info};
 use pam::Client;
 use serde::Serialize;
 use sha2::Digest;
 
-use crate::{cerds::translate_es256_to_der, ctaphid::CtapStatus, tpm};
-
-use passkeyd_share::{
-    config::Config,
-    database::{
-        get_passkeys,
-        layout::{OtherUI, Passkey},
-    }, utils::{UI, spawn_ui},
+use passkeyd_share::config::Config;
+use passkeyd_share::database::{
+    get_passkeys,
+    layout::{OtherUI, Passkey},
 };
+use passkeyd_share::utils::{UI, spawn_ui};
+
+use crate::{cerds::translate_es256_to_der, ctaphid::CtapStatus, tpm};
 
 pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
     let mut passkeys = Vec::new();
@@ -127,7 +121,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
     let hash_result = sha2::Sha256::digest(req.rp_id.as_bytes());
     let rp_id_hash_array = hash_result.into();
 
-    let authenticator_data = get_assertion::AuthenticatorData {
+    let authenticator_data = AuthenticatorData {
         attested_credential_data: None,
         extensions: None,
         flags: AuthenticatorDataFlags::USER_VERIFIED | AuthenticatorDataFlags::USER_PRESENCE,
