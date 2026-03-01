@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ratatui = "0.30.0"
+passkeyd-share = { path = "../passkeyd-share" }
+anyhow = "1.0.102"
+libc = "0.2.182"
+ctap-types.workspace = true
+serde.workspace = true
