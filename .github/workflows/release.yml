@@ -28,7 +28,7 @@ jobs:
       - name: Compress release
         run: |
           tar czf passkeyd-x86_64-unknown-linux-gnu.tar.gz \
-            -C target/x86_64-unknown-linux-gnu/release passkeyd passkeyd-enroll passkeyd-select \
+            -C target/x86_64-unknown-linux-gnu/release passkeyd passkeyd-enroll passkeyd-select passkeyd-selection passkeyd-manager \
             -C $GITHUB_WORKSPACE passkeyd.service passkeyd.conf icons theme.conf
       - name: Create GitHub Release
         run: |

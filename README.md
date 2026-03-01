@@ -50,7 +50,7 @@ sudo systemctl start passkeyd
 
 A passkey can be configured via `/etc/passkeyd.conf`. Only the user's UUID mentioned in the passkeyd configuration file can authorize the request.
 
-```env
+```bash
 GUI_UID=1000   # The UID of the user allowed to run GUI components (typically a normal desktop user)
 RUST_LOG=info  # logging level for passkeyd
 
@@ -88,6 +88,10 @@ scrollbar_thumb = [80, 80, 80, 90]  # Scrollbar thumb color (movable part of the
 ```
 
 The UI front-end can be swapped and is fully customizable For more information about creating your own custom UI, head to [Custom UI Frontend](https://github.com/bjn7/passkeyd/wiki/Custom-UI-Frontend)
+
+### Passkey Manager
+
+To manage your passkeys, enter the command `passkeyd-manager`. Press `Enter` or `Esc` to view the selected site's passkey. Press `Enter` or `Esc` again to go back. Pressing `Delete` while a website is selected will delete all of its passkeys, while pressing, `Delete` when a specific passkey is selected will delete that entry only. This will only remove it from the system, not from the website. After deleting it from the website (you may need to check the website for deletion from their end), you can delete it from your system as well, or vice versa. To exit, press `Ctrl + C`
 
 ### Alternatives
 

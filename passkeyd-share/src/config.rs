@@ -53,8 +53,7 @@ impl Config {
         unsafe {
             std::env::set_var("RUST_LOG", &rust_log);
         }
-        env_logger::init();
-
+        
         let front_enroll = config
             .get("FRONT_ENROLL")
             .unwrap_or(&"passkeyd-enroll".to_string())

@@ -4,6 +4,8 @@ members = [
     "passkeyd-share",
     "passkeyd-enroll",
     "passkeyd-select",
+    "passkeyd-manager",
+    "passkeyd-selection"
     ]
 resolver = "3"
 

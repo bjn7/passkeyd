@@ -1,0 +1,11 @@
+[package]
+name = "passkeyd-selection"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+passkeyd-share = { path = "../passkeyd-share" }
+anyhow = "1.0.102"
+iced.workspace = true
+ctap-types.workspace = true
+serde.workspace = true

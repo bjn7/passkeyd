@@ -7,6 +7,8 @@ use passkeyd_share::config;
 
 fn main() -> anyhow::Result<()> {
     let config = config::Config::initialize()?;
+    env_logger::init();
+
     let mut hid = ctaphid::ctaphid::Ctaphid::new();
     loop {
         if let Some((channel, cbor)) = hid.get_webauthn()? {

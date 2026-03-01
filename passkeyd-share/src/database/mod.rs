@@ -97,6 +97,23 @@ pub fn get_passkey(
     }
 }
 
+pub fn remove_passkey(rp: &PublicKeyCredentialRpEntity, credential_id: &[u8]) {
+    // duct taped function
+    let table = get_table(&rp, credential_id, false);
+    if let Some(table) = table {
+        fs::write("test", "here?").unwrap();
+        fs::remove_file(&table).unwrap()
+    }
+}
+
+pub fn remove_table(rp: &PublicKeyCredentialRpEntity) {
+    // duct taped function
+    let table = get_rp_table(&rp, false);
+    if let Some(table) = table {
+        fs::remove_dir_all(&table).unwrap()
+    }
+}
+
 pub fn get_passkeys(
     rp: &PublicKeyCredentialRpEntity,
 ) -> Option<(PublicKeyCredentialRpEntity, Vec<Passkey>)> {

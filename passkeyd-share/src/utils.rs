@@ -118,6 +118,7 @@ pub fn encode_cose_rs256(n: &[u8; 256], e: &[u8; 3]) -> Cose {
 pub enum UI {
     KeyEnroll,
     KeySelect,
+    KeySelection,
 }
 
 impl UI {
@@ -135,6 +136,7 @@ impl UI {
             match self {
                 UI::KeyEnroll => format!("{target_dir}/{}", "passkeyd-enroll"),
                 UI::KeySelect => format!("{target_dir}/{}", "passkeyd-select"),
+                UI::KeySelection => format!("{target_dir}/{}", "passkeyd-selection"),
             }
         }
 
@@ -143,6 +145,9 @@ impl UI {
             match self {
                 UI::KeyEnroll => format!("/usr/lib/passkeyd/{}", config.front_enroll.as_str()),
                 UI::KeySelect => format!("/usr/lib/passkeyd/{}", config.front_select.as_str()),
+                UI::KeySelection => {
+                    format!("/usr/lib/passkeyd/{}", config.front_selection.as_str())
+                }
             }
         }
     }
