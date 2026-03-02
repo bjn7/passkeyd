@@ -27,8 +27,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
         name: None,
     };
 
-    let user_selected = Some(req.allow_list.is_none());
-
+    let user_selected = req.allow_list.is_some().then(|| true);
     match req.allow_list {
         Some(allow_cred) if allow_cred.len() > 0 => {
             for cred in allow_cred {

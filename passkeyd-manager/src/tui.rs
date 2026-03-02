@@ -1,4 +1,4 @@
-use std::{fmt::format, fs, io};
+use std::io;
 
 use ctap_types::webauthn::PublicKeyCredentialRpEntity;
 use passkeyd_share::{
