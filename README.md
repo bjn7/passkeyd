@@ -35,6 +35,7 @@ aura -A passkeyd
 #### Start the Passkeyd Service
 
 ```bash
+sudo systemctl enable passkeyd
 sudo systemctl start passkeyd
 ```
 
