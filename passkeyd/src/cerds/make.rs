@@ -29,9 +29,6 @@ use log::{debug, info};
 use sha2::Digest;
 
 pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
-    // https://source.chromium.org/chromium/chromium/src/+/main:device/fido/make_credential_task.cc;drc=eb40dba9a062951578292de39424d7479f723463;l=66
-    // todo!(): handle .dummy request from chromium.
-
     if let (Some(exclude_list), Some((_, passkeys))) =
         (req.exclude_list, database::get_passkeys(&req.rp))
     {
@@ -184,23 +181,50 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
 
     info!("Looking for user authorization...");
 
-    let ui_state = AuthorizationUI {
+    let cerds_ui = AuthorizationUI {
         rp: &req.rp,
         other_ui: &passkey.credential_source.other_ui,
     };
 
-    let mut ui = spawn_ui(config, UI::KeyEnroll, ui_state);
-    let result = ui.wait().expect("failed to collect ui response");
+    let presence_ui = SelectionUI {
+        title: "Passkey Selection",
+        description: "This site is requesting authentication. Use this passkey to proceed",
+        button: "Use this passkey",
+    };
+
+    // In CTAP2.0, a MakeCredential request is sent as a backward-compatible replacement for the Selection command.
+    // https://source.chromium.org/chromium/chromium/src/+/main:device/fido/make_credential_task.cc;drc=eb40dba9a062951578292de39424d7479f723463;l=66
+
+    let is_selection_request = matches!(req.rp.id.as_str(), ".dummy" | "make.me.blink");
+    let mut ui_handle = if is_selection_request {
+        spawn_ui(config, UI::KeySelection, presence_ui)
+    } else {
+        spawn_ui(config, UI::KeyEnroll, cerds_ui)
+    };
+
+    let result = ui_handle.wait().expect("failed to collect UI response");
+
     if result.code().unwrap_or_default() != 0 {
         info!("Authorization denied");
         anyhow::bail!(CtapStatus::OperationDenied);
     }
-    passkey.store(req.rp);
+
+    if !is_selection_request {
+        passkey.store(req.rp);
+    }
+
     Ok(res)
 }
 
 #[derive(Serialize)]
 pub struct AuthorizationUI<'a> {
     pub rp: &'a PublicKeyCredentialRpEntity,
-    pub other_ui: &'a OtherUI, //todo!(): clean up OtherUI, and use from shared lib instead
+    pub other_ui: &'a OtherUI,
+}
+
+#[derive(Serialize)]
+pub struct SelectionUI<'a> {
+    pub description: &'a str,
+    pub title: &'a str,
+    pub button: &'a str,
 }

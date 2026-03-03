@@ -53,7 +53,7 @@ impl AuthorizationUI {
             .size(16);
 
         let approve = button(
-            text("Authorize")
+            text(self.button.as_str())
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
@@ -145,7 +145,7 @@ mod tests {
                 .write_all(&serialized_data)
                 .expect("Failed to write data into pipe");
         }
-        
+
         let result = command.wait().expect("Failed to collect UI response");
         let exit_code = result.code().unwrap_or(1);
 
