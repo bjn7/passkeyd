@@ -41,11 +41,12 @@ sudo systemctl start passkeyd
 
 #### Testing the Passkey Authentication
 
-1. Go to the [Passkey Demo Site](https://browser-passkey-demo.vercel.app)
-2. Enter the username "Test" and press Sign up.
-3. Refresh the site (this will automatically log you out of the "Test" account).
-4. Click Sign in. A popup will appear, select the recently added account "Test".
-5. A passphrase popup will appear, Enter your logged-in Linux user passphrase.
+1. Go to the [Webauthn Demo Site](https://webauthn.io)
+2. Enter the username "Test" and click Register.
+3. You should see: "Success! Now try to authenticate..."
+4. Click authenticate, A passphrase popup will appear, Enter your logged-in Linux user passphrase.
+
+> Note: It works perfectly with Chromium-based browsers (e.g., Chrome, Brave, etc.). However, you may encounter issues in Firefox. If you experience any problems, open an issue.
 
 ### Passkeyd Config
 

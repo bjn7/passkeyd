@@ -77,7 +77,10 @@ impl StateMachine {
                         }
                         Task::none()
                     }
-                    authorize::UserResponse::Deny => Task::none(),
+                    authorize::UserResponse::Deny => {
+                        *self.authorized_idx.borrow_mut() = 0;
+                        iced::exit()
+                    }
                 }
             }
         }

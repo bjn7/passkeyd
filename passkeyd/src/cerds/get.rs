@@ -27,7 +27,11 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
         name: None,
     };
 
-    let user_selected = req.allow_list.is_some().then(|| true);
+    let user_selected = match &req.allow_list {
+        Some(list) if list.len() > 1 => Some(true),
+        Some(list) if list.len() == 1 => None,
+        None | Some(_) => None, //firefox wants None.
+    };
     match req.allow_list {
         Some(allow_cred) if allow_cred.len() > 0 => {
             for cred in allow_cred {

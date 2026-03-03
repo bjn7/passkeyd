@@ -3,7 +3,6 @@ use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 
 use ctap_types::serde::cbor_deserialize;
-use iced::Length::Fill;
 use iced::widget::{button, column, container, text};
 use iced::window::Settings;
 use iced::{Alignment, Element, Length, Task};
@@ -146,8 +145,7 @@ mod tests {
                 .write_all(&serialized_data)
                 .expect("Failed to write data into pipe");
         }
-        println!("flushed");
-
+        
         let result = command.wait().expect("Failed to collect UI response");
         let exit_code = result.code().unwrap_or(1);
 
