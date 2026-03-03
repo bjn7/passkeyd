@@ -32,6 +32,25 @@ aura -A passkeyd
 
 ```
 
+#### Configure UID
+
+Run the command `id -u`, then modify the `GUI_UID` value in `/etc/passkeyd.conf` to match the `GUI_UID` returned by `id -u`. It is usually `1000`.
+
+```diff
+- GUI_UID=1000   # The UID of the user allowed to run GUI components (typically a normal desktop user)
++ GUI_UID=PLACE_YOUR_UID_HERE # The UID of the user allowed to run GUI components (typically a normal desktop user)
+RUST_LOG=info  # logging level for passkeyd
+
+# Advanced option: The front-end UI for selecting a passkey
+FRONT_ENROLL=passkeyd-enroll
+
+# Advanced option: The front-end UI for for passkey creation
+FRONT_SELECT=passkeyd-select
+
+# Advanced option: The front-end UI for verifying the user's presence.
+FRONT_SELECTION=passkeyd-selection
+```
+
 #### Start the Passkeyd Service
 
 ```bash
