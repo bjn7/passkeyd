@@ -2,10 +2,11 @@ use std::mem::MaybeUninit;
 
 use ctap_types::ctap2::AuthenticatorDataFlags;
 use ctap_types::ctap2::get_assertion::{AuthenticatorData, Request, Response, ResponseBuilder};
+use ctap_types::serde::cbor_deserialize;
 use ctap_types::{Bytes, webauthn::PublicKeyCredentialRpEntity};
 use log::{error, info};
 use pam::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use passkeyd_share::config::Config;
@@ -71,27 +72,20 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
     let result = ui
         .wait_with_output()
         .expect("failed to collect ui response");
+
+    if !result.status.success() {
+        info!("The request was denied");
+        anyhow::bail!(CtapStatus::KeepaliveCancel);
+    }
+
     let stdout = &result.stdout;
 
-    let data_slice = if result.status.success()
-        && let Some(start_of_the_text) = stdout.iter().position(|&x| x == 0x02)
-    {
-        if let Some(end_of_the_text) = stdout[start_of_the_text + 1..]
-            .iter()
-            .position(|&x| x == 0x03)
-        {
-            let end_pos = start_of_the_text + 1 + end_of_the_text;
-            &stdout[start_of_the_text + 1..end_pos]
-        } else {
-            anyhow::bail!(CtapStatus::OperationDenied)
-        }
-    } else {
-        info!("The request was denied");
-        anyhow::bail!(CtapStatus::KeepaliveCancel)
-    };
-
-    let authorized_idx = usize::from_le_bytes(data_slice[..size_of::<usize>()].try_into().unwrap());
-    let password = String::from_utf8_lossy(&data_slice[size_of::<usize>()..]).to_string();
+    let start = stdout
+        .iter()
+        .position(|&x| x == 0x02)
+        .expect("missing STX marker in UI output");
+    let serialized = &stdout[start + 1..];
+    let ui_response: SelectionResponse = cbor_deserialize(serialized).unwrap();
 
     // client isn't expected to send a username.
     let Some(login_user) = get_username_from_uid(config.gui_uid) else {
@@ -102,7 +96,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
     let mut client = Client::with_password("system-auth").expect("Failed to init PAM client!");
     client
         .conversation_mut()
-        .set_credentials(login_user, password);
+        .set_credentials(login_user, ui_response.passphrase);
     // Entering the wrong password more than the configured 'deny' attempts will lock your account. Even with the correct password, it will still report as invalid.
     // To unlock the account, use the command: `faillock --user <username> --reset`, or wait for the configured lock time in PAM, which is usually around 600 seconds (10 minutes).
     if client.authenticate().is_err() {
@@ -117,7 +111,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
     }
 
     let authorized_passkey = passkeys
-        .drain(authorized_idx..=authorized_idx)
+        .drain(ui_response.index..=ui_response.index)
         .next()
         .unwrap();
 
@@ -192,6 +186,12 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
 pub struct AuthorizationUI<'a> {
     pub rp: &'a PublicKeyCredentialRpEntity,
     pub other_uis: Vec<&'a OtherUI>,
+}
+
+#[derive(Deserialize)]
+pub struct SelectionResponse {
+    pub index: usize,
+    pub passphrase: String,
 }
 
 fn get_username_from_uid<'a>(uid: libc::uid_t) -> Option<String> {

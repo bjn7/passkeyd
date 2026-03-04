@@ -18,6 +18,12 @@ pub enum UserResponse {
     Authorize(usize),
 }
 
+#[derive(Serialize)]
+pub struct SelectionResponse<'a> {
+    pub index: usize,
+    pub passphrase: &'a str,
+}
+
 impl SelectionUI {
     pub fn view(&self) -> Element<'_, UserResponse, theme::StylisedTheme> {
         let title_bar = title_bar_component("Select Passkey", UserResponse::Deny);

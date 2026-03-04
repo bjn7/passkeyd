@@ -10,8 +10,11 @@ use iced::{Element, Task, widget::operation::focus_next, window::Settings};
 use pam::Client;
 use zeroize::Zeroize;
 
-use crate::{authorize::AuthorizationUI, select::SelectionUI};
-use passkeyd_share::theme;
+use crate::{
+    authorize::AuthorizationUI,
+    select::{SelectionResponse, SelectionUI},
+};
+use passkeyd_share::{theme, utils::CborVec};
 
 mod authorize;
 mod select;
@@ -160,9 +163,14 @@ fn write_output(authorized_index: usize, passphrase: &mut str) -> std::io::Resul
     let mut stdout = std::io::stdout().lock();
 
     stdout.write_all(&[0x02])?; // Start of Text
-    stdout.write_all(&authorized_index.to_le_bytes())?;
-    stdout.write_all(passphrase.as_bytes())?;
-    stdout.write_all(&[0x03])?; // End of Text
+    let report = CborVec::with_object(
+        SelectionResponse {
+            index: authorized_index,
+            passphrase: &passphrase,
+        },
+        size_of::<SelectionResponse>(),
+    );
+    stdout.write_all(&report.take_inner())?;
     stdout.flush()?;
 
     passphrase.zeroize();
