@@ -39,7 +39,7 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn draw(&mut self, frame: &mut Frame) {
         let layout_area = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![Constraint::Percentage(85), Constraint::Percentage(15)])
@@ -69,7 +69,7 @@ impl App {
             .highlight_symbol(" > ")
             .repeat_highlight_symbol(false);
 
-        frame.render_stateful_widget(list, layout_area[0], &mut self.list.get_state());
+        frame.render_stateful_widget(list, layout_area[0], self.list.get_state_mut());
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
