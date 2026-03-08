@@ -1,6 +1,7 @@
 use std::{fs, io};
 
 use ctap_types::{serde::cbor_deserialize, webauthn::PublicKeyCredentialRpEntity};
+use passkeyd_share::database::database_dir;
 use passkeyd_share::database::layout::{Passkey, StoredPasskey};
 use ratatui::{text::Text, widgets::ListState};
 
@@ -65,7 +66,7 @@ impl ListStateExt {
 
     pub fn new_from_file() -> Result<Self, io::Error> {
         let mut database = Vec::with_capacity(10);
-        let database_dir = fs::read_dir("/var/lib/passkeyd/database")?;
+        let database_dir = fs::read_dir(database_dir())?;
         'outer: for website_entry in database_dir {
             let website = website_entry?.path();
             let metadata_path = website.join("metadata");

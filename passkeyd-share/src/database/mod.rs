@@ -1,17 +1,19 @@
 use ctap_types::{serde::cbor_deserialize, webauthn::PublicKeyCredentialRpEntity};
 use sha2::Digest;
-use std::{fs, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 pub mod layout;
 use layout::{Passkey, StoredPasskey};
 use log::info;
 
 use crate::utils::CborVec;
 
-#[cfg(debug_assertions)]
-const FSBASE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/TEMPP_DATABASE");
-
-#[cfg(not(debug_assertions))]
 const FSBASE: &str = "/var/lib/passkeyd/database";
+
+pub fn database_dir() -> PathBuf {
+    env::var_os("PASSKEYD_DATABASE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(FSBASE))
+}
 
 // impl From<PrivateWrapper> for Private {
 //     fn from(wrapper: PrivateWrapper) -> Private {
@@ -39,7 +41,7 @@ fn get_metadata(rp_path: &PathBuf) -> PublicKeyCredentialRpEntity {
 fn get_rp_table(rp: &PublicKeyCredentialRpEntity, create: bool) -> Option<PathBuf> {
     let rp_hash = sha2::Sha256::digest(&rp.id.as_bytes());
     let rp_hex_hash = hex::encode(rp_hash);
-    let rp_table = PathBuf::from(FSBASE).join(rp_hex_hash);
+    let rp_table = database_dir().join(rp_hex_hash);
     if rp_table.exists() {
         Some(rp_table)
     } else if create {
@@ -101,7 +103,6 @@ pub fn remove_passkey(rp: &PublicKeyCredentialRpEntity, credential_id: &[u8]) {
     // duct taped function
     let table = get_table(&rp, credential_id, false);
     if let Some(table) = table {
-        fs::write("test", "here?").unwrap();
         fs::remove_file(&table).unwrap()
     }
 }
