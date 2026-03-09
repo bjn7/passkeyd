@@ -7,6 +7,10 @@ use log::info;
 
 use crate::utils::CborVec;
 
+#[cfg(debug_assertions)]
+const FSBASE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/TEMPP_DATABASE");
+
+#[cfg(not(debug_assertions))]
 const FSBASE: &str = "/var/lib/passkeyd/database";
 
 pub fn database_dir() -> PathBuf {
