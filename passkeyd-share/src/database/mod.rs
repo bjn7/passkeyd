@@ -1,6 +1,6 @@
 use ctap_types::{serde::cbor_deserialize, webauthn::PublicKeyCredentialRpEntity};
 use sha2::Digest;
-use std::{env, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 pub mod layout;
 use layout::{Passkey, StoredPasskey};
 use log::info;
@@ -14,9 +14,7 @@ const FSBASE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/TEMPP_DATABASE");
 const FSBASE: &str = "/var/lib/passkeyd/database";
 
 pub fn database_dir() -> PathBuf {
-    env::var_os("PASSKEYD_DATABASE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(FSBASE))
+    PathBuf::from(FSBASE)
 }
 
 // impl From<PrivateWrapper> for Private {
