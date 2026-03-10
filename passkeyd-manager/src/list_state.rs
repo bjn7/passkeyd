@@ -1,6 +1,7 @@
 use std::{fs, io};
 
 use ctap_types::{serde::cbor_deserialize, webauthn::PublicKeyCredentialRpEntity};
+use passkeyd_share::database::database_dir;
 use passkeyd_share::database::layout::{Passkey, StoredPasskey};
 use ratatui::{text::Text, widgets::ListState};
 
@@ -31,9 +32,41 @@ pub enum Selected {
 }
 
 impl ListStateExt {
+    fn clamp_index(selected: Option<usize>, len: usize) -> Option<usize> {
+        (len > 0).then(|| selected.unwrap_or_default().min(len - 1))
+    }
+
+    fn selected_website_index(&self) -> Option<usize> {
+        let index = self.index.website.selected()?;
+        (index < self.database.len()).then_some(index)
+    }
+
+    fn selected_passkey_index(&self) -> Option<usize> {
+        let website_index = self.selected_website_index()?;
+        let passkey_index = self.index.passkey.selected()?;
+        (passkey_index < self.database.get(website_index)?.passkeys.len()).then_some(passkey_index)
+    }
+
+    fn sync_website_selection(&mut self) {
+        self.index.website.select(Self::clamp_index(
+            self.index.website.selected(),
+            self.database.len(),
+        ));
+    }
+
+    fn sync_passkey_selection(&mut self) {
+        let selected = self.selected_website_index().and_then(|index| {
+            Self::clamp_index(
+                self.index.passkey.selected(),
+                self.database[index].passkeys.len(),
+            )
+        });
+        self.index.passkey.select(selected);
+    }
+
     pub fn new_from_file() -> Result<Self, io::Error> {
         let mut database = Vec::with_capacity(10);
-        let database_dir = fs::read_dir("/var/lib/passkeyd/database")?;
+        let database_dir = fs::read_dir(database_dir())?;
         'outer: for website_entry in database_dir {
             let website = website_entry?.path();
             let metadata_path = website.join("metadata");
@@ -79,52 +112,79 @@ impl ListStateExt {
     pub fn select_next(&mut self) {
         match self.list_type {
             ListType::PasskeyList => {
-                let current_index = self.index.passkey.selected().unwrap_or_default();
-                let selected = self
-                    .database
-                    .get(current_index)
-                    .map(|db| std::cmp::min(db.passkeys.len().saturating_sub(1), current_index + 1));
+                let selected = self.selected_website_index().and_then(|index| {
+                    let len = self.database[index].passkeys.len();
+                    Self::clamp_index(
+                        self.index
+                            .passkey
+                            .selected()
+                            .map_or(Some(0), |current| Some(current.saturating_add(1))),
+                        len,
+                    )
+                });
                 self.index.passkey.select(selected);
             }
             ListType::WebsiteList => {
-                let current_index = self.index.website.selected().unwrap_or_default();
-                self.index.website.select(Some(std::cmp::min(
-                    self.database.len().saturating_sub(1),
-                    current_index + 1,
-                )));
+                let selected = Self::clamp_index(
+                    self.index
+                        .website
+                        .selected()
+                        .map_or(Some(0), |current| Some(current.saturating_add(1))),
+                    self.database.len(),
+                );
+                self.index.website.select(selected);
             }
         };
     }
 
     pub fn select_previous(&mut self) {
         match self.list_type {
-            ListType::PasskeyList => self.index.passkey.select_previous(),
-            ListType::WebsiteList => self.index.website.select_previous(),
+            ListType::PasskeyList => {
+                let selected = self.selected_website_index().and_then(|index| {
+                    let len = self.database[index].passkeys.len();
+                    Self::clamp_index(
+                        self.index
+                            .passkey
+                            .selected()
+                            .map_or(Some(0), |current| Some(current.saturating_sub(1))),
+                        len,
+                    )
+                });
+                self.index.passkey.select(selected);
+            }
+            ListType::WebsiteList => {
+                let selected = Self::clamp_index(
+                    self.index
+                        .website
+                        .selected()
+                        .map_or(Some(0), |current| Some(current.saturating_sub(1))),
+                    self.database.len(),
+                );
+                self.index.website.select(selected);
+            }
         };
     }
 
     pub fn remove(&mut self) -> Option<Selected> {
         match self.list_type {
-            ListType::PasskeyList => self
-                .database
-                .get_mut(self.index.website.offset())
-                .map(|db| {
-                    let pass = db.passkeys.remove(self.index.passkey.offset());
-                    Selected::Passkey(pass)
-                }),
+            ListType::PasskeyList => {
+                let website_index = self.selected_website_index()?;
+                let passkey_index = self.selected_passkey_index()?;
+                let passkey = self.database[website_index].passkeys.remove(passkey_index);
+                self.sync_passkey_selection();
+                Some(Selected::Passkey(passkey))
+            }
             ListType::WebsiteList => {
-                let current_index = self.index.website.selected().unwrap_or_default();
-                if self.database.len() - 1 > current_index {
-                    let db = self.database.remove(current_index);
-                    Some(Selected::Website(db.rp))
-                } else {
-                    None
-                }
+                let current_index = self.selected_website_index()?;
+                let db = self.database.remove(current_index);
+                self.sync_website_selection();
+                self.sync_passkey_selection();
+                Some(Selected::Website(db.rp))
             }
         }
     }
 
-    pub fn into_text(&self) -> Vec<Text<'_>> {
+    pub fn into_text(&self) -> Vec<Text<'static>> {
         // let x = self.database.get(self.index.website).unwrap();
         if self.database.len() == 0 {
             return vec![Text::from("Not Entry Found\0")];
@@ -133,23 +193,26 @@ impl ListStateExt {
         match self.list_type {
             ListType::PasskeyList => {
                 if let Some(db) = self
-                    .database
-                    .get(self.index.website.selected().unwrap_or_default())
+                    .selected_website_index()
+                    .and_then(|index| self.database.get(index))
                 {
                     return db
                         .passkeys
                         .iter()
                         .map(|passkey| {
                             if let Some(name) = &passkey.credential_source.other_ui.user.name {
-                                Text::from(name.as_str())
+                                Text::from(name.to_string())
                             } else if let Some(dname) =
                                 &passkey.credential_source.other_ui.user.display_name
                             {
-                                Text::from(dname.as_str())
+                                Text::from(dname.to_string())
                             } else {
-                                Text::from(String::from_utf8_lossy(
-                                    passkey.credential_source.other_ui.user.id.as_slice(),
-                                ))
+                                Text::from(
+                                    String::from_utf8_lossy(
+                                        passkey.credential_source.other_ui.user.id.as_slice(),
+                                    )
+                                    .into_owned(),
+                                )
                             }
                         })
                         .collect::<Vec<_>>();
@@ -163,9 +226,9 @@ impl ListStateExt {
                         // A site name is an arbitrary name which can be spoofed, but
                         // it is not insignificant.
                         if let Some(site_name) = &db.rp.name {
-                            Text::from(site_name.as_str())
+                            Text::from(site_name.to_string())
                         } else {
-                            Text::from(db.rp.id.as_str())
+                            Text::from(db.rp.id.to_string())
                         }
                     })
                     .collect::<Vec<_>>()
@@ -177,15 +240,17 @@ impl ListStateExt {
         self.list_type = match self.list_type {
             ListType::PasskeyList => ListType::WebsiteList,
             ListType::WebsiteList => {
-                self.index.passkey = self.index.passkey.with_selected(Some(0));
+                self.sync_website_selection();
+                self.sync_passkey_selection();
                 ListType::PasskeyList
             }
         }
     }
-    pub fn get_state(&self) -> ListState {
+
+    pub fn get_state_mut(&mut self) -> &mut ListState {
         match self.list_type {
-            ListType::PasskeyList => self.index.passkey,
-            ListType::WebsiteList => self.index.website,
+            ListType::PasskeyList => &mut self.index.passkey,
+            ListType::WebsiteList => &mut self.index.website,
         }
     }
 }
