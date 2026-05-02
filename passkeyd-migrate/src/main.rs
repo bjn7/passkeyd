@@ -84,25 +84,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap(),
             ));
 
-            let new_passkey_model = layout::Passkey::new(
-                old_passkey_model.credential_source.rp_id.clone(),
-                old_passkey_model.credential_source.other_ui.user.clone(),
-                crypto_pair,
-            );
+            let new_passkey_model = layout::Passkey {
+                credential_source: layout::CredentialSource {
+                    id: old_passkey_model.credential_source.id,
+                    crypto_pair,
+                    rp_id: old_passkey_model.credential_source.rp_id,
+                    user_handle: old_passkey_model.credential_source.user_handle,
+                    other_ui: layout::OtherUI {
+                        user: old_passkey_model.credential_source.other_ui.user,
+                        site_icon: old_passkey_model.credential_source.other_ui.site_icon,
+                        user_icon: old_passkey_model.credential_source.other_ui.user_icon,
+                    },
+                },
+                sign_count: old_passkey_model.sign_count,
+                credential_type: layout::CredentialType::PublicKey,
+            };
+
+            let rp_id = new_passkey_model.credential_source.rp_id.clone();
+            let user_handle = if let Some(dname) = &new_passkey_model
+                .credential_source
+                .other_ui
+                .user
+                .display_name
+            {
+                dname.to_string()
+            } else {
+                "unknown".to_string()
+            };
 
             let mock_rp = PublicKeyCredentialRpEntity {
                 icon: None,
-                id: old_passkey_model.credential_source.rp_id.clone(),
+                id: rp_id.clone(),
                 name: None,
             };
+
             new_passkey_model.store(mock_rp);
 
             println!(
                 "{}",
                 passkeyd_locale::translate!(
                     "migrate.main.migration_success",
-                    site => old_passkey_model.credential_source.rp_id.to_string(),
-                    user_account => String::from_utf8_lossy(&old_passkey_model.credential_source.other_ui.user.id)
+                    site => rp_id,
+                    user_account => user_handle
                 )
             );
         }
