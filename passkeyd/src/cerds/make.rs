@@ -1,6 +1,5 @@
-use super::translate_es256_to_der;
+use crate::cryptography;
 use crate::ctaphid::CtapStatus;
-use crate::tpm;
 use ctap_types::Bytes;
 use ctap_types::ctap2::AttestationStatement;
 use ctap_types::ctap2::AttestationStatementFormat;
@@ -14,14 +13,12 @@ use ctap_types::ctap2::make_credential::Response;
 use ctap_types::ctap2::make_credential::ResponseBuilder;
 use ctap_types::webauthn;
 use ctap_types::webauthn::PublicKeyCredentialRpEntity;
-use passkeyd_share::config::Config;
-use passkeyd_share::database;
-use passkeyd_share::database::layout::{OtherUI, Passkey};
-use passkeyd_share::utils::Cose;
-use passkeyd_share::utils::UI;
-use passkeyd_share::utils::encode_cose_es256;
-use passkeyd_share::utils::encode_cose_rs256;
-use passkeyd_share::utils::spawn_ui;
+use passkeyd_abi::config::Config;
+use passkeyd_abi::database;
+use passkeyd_abi::database::layout::{OtherUI, Passkey};
+use passkeyd_abi::utils::Cose;
+use passkeyd_abi::utils::UI;
+use passkeyd_abi::utils::spawn_ui;
 use serde::Serialize;
 
 use super::{ALGO_ES256, ALGO_RS256};
@@ -44,53 +41,23 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
         }
     }
 
-    let mut ctx = tpm::initialize_tpm_with_session()?;
-    let srk_key_handle = tpm::create_primary_key_handle(&mut ctx)?;
+    let mut crypto = cryptography::resolve_cryptography(config);
     let algos = req.pub_key_cred_params.0;
-    let (privte_key, public_key, cose) = if algos
+
+    let (crypto_pair, cose) = if algos
         .contains(&webauthn::KnownPublicKeyCredentialParameters { alg: ALGO_ES256 })
     {
-        let (pr, pu) = tpm::es256::make_cerd(&mut ctx, &srk_key_handle)?;
-        match &pu {
-            tss_esapi::structures::Public::Ecc {
-                object_attributes: _,
-                name_hashing_algorithm: _,
-                auth_policy: _,
-                parameters: _,
-                unique,
-            } => {
-                let cose = encode_cose_es256(
-                    unique.x().as_array().unwrap(),
-                    unique.y().as_array().unwrap(),
-                );
-                (pr, pu, cose)
-            }
-            _ => unreachable!(),
-        }
+        // let it crash
+        crypto.generate_es256_keypair().unwrap()
     } else if algos.contains(&webauthn::KnownPublicKeyCredentialParameters { alg: ALGO_RS256 }) {
-        let (pr, pu) = tpm::rs256::make_cerd(&mut ctx, &srk_key_handle)?;
-        match &pu {
-            tss_esapi::structures::Public::Rsa {
-                object_attributes: _,
-                name_hashing_algorithm: _,
-                auth_policy: _,
-                parameters,
-                unique,
-            } => {
-                let e: [u8; 4] = parameters.exponent().value().to_be_bytes();
-                let n = unique.value().as_array().unwrap();
-                let cose = encode_cose_rs256(n, &e[1..].as_array().unwrap());
-                (pr, pu, cose)
-            }
-            _ => unreachable!(),
-        }
+        crypto.generate_rs256_keypair().unwrap()
     } else {
         anyhow::bail!(CtapStatus::UnsupportedAlgorithm)
     };
 
     debug!("Generated wrapped private and public keys");
 
-    let passkey = Passkey::new(privte_key, public_key, req.rp.id.clone(), req.user.clone());
+    let passkey = Passkey::new(req.rp.id.clone(), req.user.clone(), crypto_pair);
 
     let attested_credential = AttestedCredentialData {
         aaguid: &[0u8; 16],
@@ -119,32 +86,10 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
     let mut signed_payload = auth_data_bytes.to_vec();
     signed_payload.extend_from_slice(req.client_data_hash);
 
-    let signature = tpm::sign(
-        &mut ctx,
-        &srk_key_handle,
-        passkey
-            .credential_source
-            .private_key
-            .clone()
-            .try_into()
-            .unwrap(),
-        passkey
-            .credential_source
-            .public_key
-            .clone()
-            .try_into()
-            .unwrap(),
-        &mut signed_payload,
+    let (sign_alg, sign) = crypto.sign_payload(
+        passkey.credential_source.crypto_pair.clone(),
+        &signed_payload,
     )?;
-
-    let (alg, sig_bytes) = match signature {
-        tss_esapi::structures::Signature::EcDsa(sig) => (
-            -7,
-            translate_es256_to_der(sig.signature_r().as_slice(), sig.signature_s().as_slice()),
-        ),
-        tss_esapi::structures::Signature::RsaSsa(sig) => (-257, sig.signature().to_vec()),
-        _ => unreachable!(),
-    };
 
     let mut res = ResponseBuilder {
         auth_data: authenticator_data
@@ -155,8 +100,8 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
     .build();
 
     res.att_stmt = Some(AttestationStatement::Packed(PackedAttestationStatement {
-        alg,
-        sig: Bytes::from_slice(&sig_bytes).expect("Unexpected number of bytes"),
+        alg: sign_alg,
+        sig: Bytes::from_slice(&sign).expect("Unexpected number of bytes"),
         x5c: None,
     }));
 
@@ -187,15 +132,16 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
     };
 
     let presence_ui = SelectionUI {
-        title: "Passkey Selection",
-        description: "This site is requesting authentication. Use this passkey to proceed",
-        button: "Use this passkey",
+        title: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.title"),
+        description: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.description"),
+        button: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.button"),
     };
 
     // In CTAP2.0, a MakeCredential request is sent as a backward-compatible replacement for the Selection command.
     // https://source.chromium.org/chromium/chromium/src/+/main:device/fido/make_credential_task.cc;drc=eb40dba9a062951578292de39424d7479f723463;l=66
 
     let is_selection_request = matches!(req.rp.id.as_str(), ".dummy" | "make.me.blink");
+
     let mut ui_handle = if is_selection_request {
         spawn_ui(config, UI::KeySelection, presence_ui)
     } else {

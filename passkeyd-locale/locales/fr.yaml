@@ -1,0 +1,42 @@
+migrate:
+  main:
+    database_not_found: "Base de données introuvable."
+    malfored_metadata: "Métadonnées malformées détectées. Le fichier a peut-être été mis à jour ou corrompu. Ignoré. Seuls les anciens formats de fichier sont pris en charge."
+    malfored_passkey: "Clé d’accès malformée détectée. Le fichier a peut-être été mis à jour ou corrompu. Ignoré. Seuls les anciens formats de fichier sont pris en charge."
+    migration_success: "L’ancienne clé d’accès pour le site %{site}, associée au compte utilisateur %{user_account}, a été migrée."
+
+manager:
+  tui:
+    confirmation:
+      title: "Confirmer cette action ?"
+      description: "Êtes-vous sûr ? Autorisez cette demande pour prouver que vous n’avez pas appuyé sur la touche supprimer par accident."
+      button: "Autoriser"
+  main:
+    root_access_required: "Êtes-vous en mode root ? L’accès à la liste des clés nécessite des privilèges root."
+
+ui:
+  enroll:
+    main:
+      title: "Créer une clé d’accès"
+      description_with_account: "Le site %{site} demande de créer une clé d’accès pour votre compte %{user_account}."
+      description_without_account: "Le site %{site} demande de créer une clé d’accès pour votre compte %{user_account}."
+      approve: "Autoriser"
+
+  select:
+    authorize:
+      title_bar: "Vérification de votre identité"
+      helper_text: "Échec de l’authentification, veuillez réessayer."
+      password: "Entrez votre mot de passe"
+      description: "Entrez votre mot de passe pour autoriser cette demande de clé d’accès"
+
+    select:
+      title_bar: "Sélectionner une clé d’accès"
+      description: "Le site %{site} demande d’utiliser une clé d’accès."
+
+passkeyd:
+  cerds:
+    make:
+      presence_ui:
+        title: "Sélection de clé d’accès"
+        description: "Ce site demande une authentification. Utilisez cette clé d’accès pour continuer"
+        button: "Utiliser cette clé d’accès"

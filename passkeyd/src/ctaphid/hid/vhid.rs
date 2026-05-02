@@ -1,7 +1,7 @@
 // modified version of https://crates.io/crates/uhid_virt
 // Modifed: changed from non-blocking into blocking
 
-#![allow(unused)]
+#![allow(clippy::all, unused)]
 use std::convert::TryFrom;
 use std::fs::{File, OpenOptions};
 use std::io::{self, prelude::*};

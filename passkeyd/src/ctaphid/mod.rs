@@ -1,12 +1,12 @@
 use thiserror::Error;
+#[allow(clippy::module_inception)]
 pub mod ctaphid;
 mod hid;
 mod utils;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
-/// https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html#error-responses
-
+// https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html#error-responses
 #[allow(unused)]
 pub enum CtapStatus {
     // Success

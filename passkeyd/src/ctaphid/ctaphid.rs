@@ -1,11 +1,15 @@
 use anyhow::Ok;
+use ctap_types::serde::cbor_serialize_to;
 use ctaphid_types::{
     Capabilities, Channel, Command, DeviceError, DeviceVersion, InitResponse, InitializationPacket,
     Message, Packet,
 };
+use p256::{ecdh::EphemeralSecret, elliptic_curve::rand_core::OsRng};
+use passkeyd_abi::utils::CborVec;
 use std::{collections::HashMap, fs::File};
 
 use crate::ctaphid::{
+    CtapStatus,
     hid::OutputEvent,
     utils::{collect_all_packet, device_err_into_bytes, generate_new_cid},
 };
@@ -24,19 +28,20 @@ pub struct ChannelPayload {
 
 pub struct Ctaphid {
     pub hid: hid::UHIDDevice<File>,
-    // no need to free the channels, a average of 500 channels will be stored before getting wiped out by shutdown or restart.
-    // todo!(): actually, once hit every 100 channels, drop 50 channels, so, it can maintain 100 channels.
     pub payload_stack: HashMap<HashableChannel, ChannelPayload>,
-    // pub chancelled_channels: Vec<Channel>,
+    pub ephemeral_secret: p256::ecdh::EphemeralSecret,
 }
 
 impl Ctaphid {
     pub fn new() -> Self {
         debug!("HID created!");
 
+        let secret_key = EphemeralSecret::random(&mut OsRng);
+
         Self {
             hid: hid::create_hid().expect("Failed to create HID, are you root?"),
             payload_stack: HashMap::with_capacity(10),
+            ephemeral_secret: secret_key,
         }
     }
 
@@ -51,7 +56,7 @@ impl Ctaphid {
         };
 
         let raw_payload = &report_bytes[1..];
-        let ctaphid_packet: Packet<Vec<u8>> = Packet::try_from(&raw_payload[..]).unwrap();
+        let ctaphid_packet: Packet<Vec<u8>> = Packet::try_from(raw_payload).unwrap();
         match ctaphid_packet {
             Packet::Initialization(mut init_packet) => {
                 debug!("Received initialization payload.");
@@ -66,7 +71,7 @@ impl Ctaphid {
 
                 let channel_payload = self
                     .payload_stack
-                    .get_mut(&init_packet.channel.clone().into())
+                    .get_mut(&init_packet.channel.into())
                     .unwrap();
 
                 let take_count = channel_payload.data.capacity().min(init_packet.data.len());
@@ -175,7 +180,7 @@ impl Ctaphid {
             // However, even with the fallback, it won't be reached.
             Command::KeepAlive => unreachable!(),
             Command::Lock => {
-                self.send_64response(channel, Command::Lock, &[])?;
+                self.send_64response(channel, Command::Lock, [])?;
             }
             Command::Message => {
                 // let p = InitializationPacket {
@@ -184,12 +189,12 @@ impl Ctaphid {
                 //     data: &[],
                 //     length: 0,
                 // }
-                self.send_64response(channel, Command::Unknown(0x83), &[0x6D, 0x00])?;
+                self.send_64response(channel, Command::Unknown(0x83), [0x6D, 0x00])?;
             }
             Command::Unknown(_) => unimplemented!(),
             Command::Vendor(_) => unimplemented!(),
             Command::Wink => {
-                self.send_64response(channel, Command::Wink, &[])?;
+                self.send_64response(channel, Command::Wink, [])?;
             }
         }
         debug!("Acknowledged {:?}", command);
@@ -214,6 +219,22 @@ impl Ctaphid {
         Ok(())
     }
 
+    pub fn send_cbor<T: serde::Serialize>(
+        &mut self,
+        channel: Channel,
+        response: T,
+    ) -> anyhow::Result<()> {
+        let mut cbor_data = CborVec::from_iter([CtapStatus::Ok as u8]);
+        cbor_serialize_to(&response, &mut cbor_data)
+            .map_err(|e| anyhow::anyhow!("CBOR serialization failed: {}", e))?;
+
+        self.send_response(channel, Command::Cbor, cbor_data.as_ref())
+    }
+
+    pub fn send_cbor_status(&mut self, channel: Channel, status: CtapStatus) -> anyhow::Result<()> {
+        self.send_64response(channel, Command::Cbor, [status as u8])
+    }
+
     // pub fn free_channel(&mut self) {
     //     self.channel = None;
     // }
@@ -226,7 +247,7 @@ impl Ctaphid {
     ) -> anyhow::Result<()> {
         let message = Message {
             channel,
-            command: command,
+            command,
             data,
         };
         let fragements = message.fragments(64).unwrap();
@@ -252,7 +273,7 @@ impl Ctaphid {
 
         let mut report = [0u8; 64];
         packet.serialize(&mut report)?;
-        self.hid.write(&report.to_vec())?;
+        self.hid.write(report.as_ref())?;
 
         Ok(())
     }

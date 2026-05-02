@@ -1,14 +1,16 @@
 // cheaply written passkey manager, held by duct tape
-use libc;
 use std::process::{ExitCode, exit};
-
 mod list_state;
 mod tui;
 
 fn main() -> ExitCode {
+    passkeyd_locale::init_translations();
     let is_root = unsafe { libc::geteuid() == 0 };
     if !is_root {
-        eprintln!("Are you running as root? Accessing the passkey list requires root privileges.");
+        eprintln!(
+            "{}",
+            passkeyd_locale::translate!("manager.main.root_access_required")
+        );
         exit(126);
     }
 

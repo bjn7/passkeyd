@@ -1,0 +1,42 @@
+migrate:
+  main:
+    database_not_found: "База данных не найдена."
+    malfored_metadata: "Обнаружены повреждённые метаданные. Файл мог быть обновлён или повреждён. Пропускаем его. Поддерживаются только более старые форматы файлов."
+    malfored_passkey: "Обнаружен повреждённый passkey. Файл мог быть обновлён или повреждён. Пропускаем его. Поддерживаются только более старые форматы файлов."
+    migration_success: "Старый passkey для сайта %{site}, связанный с учётной записью пользователя %{user_account}, был успешно перенесён."
+
+manager:
+  tui:
+    confirmation:
+      title: "Подтвердить это действие?"
+      description: "Вы уверены? Авторизуйте этот запрос, чтобы доказать, что вы не нажали клавишу удаления по ошибке."
+      button: "авторизовать"
+
+  main:
+    root_access_required: "Вы запущены от root? Доступ к списку passkey требует привилегий root."
+
+ui:
+  enroll:
+    main:
+      title: "Создать Passkey"
+      description_with_account: "Сайт %{site} запрашивает создание passkey для вашей учётной записи %{user_account}."
+      description_without_account: "Сайт %{site} запрашивает создание passkey для вашей учётной записи %{user_account}."
+      approve: "авторизовать"
+
+  select:
+    authorize:
+      title_bar: "Убедитесь, что это вы"
+      helper_text: "Не удалось пройти аутентификацию, попробуйте ещё раз."
+      password: "Введите вашу парольную фразу"
+      description: "Введите вашу парольную фразу, чтобы подтвердить этот запрос passkey"
+    select:
+      title_bar: "Выбор Passkey"
+      description: "Сайт %{site} запрашивает использование passkey."
+
+passkeyd:
+  cerds:
+    make:
+      presence_ui:
+        title: "Выбор Passkey"
+        description: "Этот сайт запрашивает аутентификацию. Используйте этот passkey для продолжения"
+        button: "Использовать этот passkey"

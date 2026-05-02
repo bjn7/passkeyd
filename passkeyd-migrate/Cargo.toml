@@ -1,0 +1,19 @@
+[package]
+name = "passkeyd-migrate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytes.workspace =true
+serde.workspace = true
+ctap-types.workspace = true
+rand = "0.9.2"
+log = "0.4.29"
+tss-esapi = "7.6.0"
+thiserror = "2.0.18"
+sha2 = "0.10.9"
+hex="0.4.2"
+ureq = "3.2.0"
+anyhow = "1.0.100"
+passkeyd-abi = { path = "../passkeyd-abi" }
+passkeyd-locale = { path = "../passkeyd-locale" }

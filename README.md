@@ -32,7 +32,13 @@ aura -A passkeyd
 
 ```
 
+#### Important
+
+It is highly recommended to have TPM 2.0. You can check this with the command `ls /dev/tpm*`. If this returns nothing, either you don’t have TPM or it isn’t functioning properly. You might want to switch to virtual cryptography via `/etc/passkeyd.conf`.
+
 #### Configure UID
+
+A passkey can be configured via `/etc/passkeyd.conf`. Only the user's UUID mentioned in the passkeyd configuration file can authorize the passkeyd request.
 
 Run the command `id -u`, then modify the `GUI_UID` value in `/etc/passkeyd.conf` to match the `GUI_UID` returned by `id -u`. It is usually `1000`.
 
@@ -48,7 +54,29 @@ FRONT_ENROLL=passkeyd-enroll
 FRONT_SELECT=passkeyd-select
 
 # Advanced option: The front-end UI for verifying the user's presence.
-FRONT_SELECTION=passkeyd-selection
+FRONT_SELECTION=passkeyd-selection 
+
+# There are two modes for cryptography:
+# 1. TPM (Highly recommended) => Fancy math is done at the hardware level (no one can sneak in, no one can access private data)
+# 2. Virtual => Fancy math is done at the software level, without hardware support.
+
+# It is 'HIGHLY' recommended to use TPM-based cryptography.
+
+# IMPORTANT: NON-TPM KEYS ARE NOT ENCRYPTED AND ARE EXPOSED.
+# HOWEVER, they are stored with root privileges, so no one can access them without root access.
+
+# SUPER, SUPER, REALLY IMPORTANT:
+# YOU MUST HAVE TPM 2.0 IN ORDER TO USE TPM.
+# You can check this with the command `ls /dev/tpm*`.
+# If this returns nothing, either you don't have TPM or it isn't functioning properly.
+# You might want to switch to virtual cryptography.
+
+USE_TPM_CRYPTOGRAPHY=yes # Can either be "yes" or "no"
+
+# The language is automatically selected based on system preferences, but can be forced to switch via this option.
+# Available language options:
+# de, en, fr, ru, zh
+# LANGUAGE=eu
 ```
 
 #### Start the Passkeyd Service
@@ -66,24 +94,6 @@ sudo systemctl start passkeyd
 4. Click authenticate, A passphrase popup will appear, Enter your logged-in Linux user passphrase.
 
 > Note: It works perfectly with Chromium-based browsers (e.g., Chrome, Brave, etc.). However, you may encounter issues in Firefox. If you experience any problems, open an issue.
-
-### Passkeyd Config
-
-A passkey can be configured via `/etc/passkeyd.conf`. Only the user's UUID mentioned in the passkeyd configuration file can authorize the request.
-
-```bash
-GUI_UID=1000   # The UID of the user allowed to run GUI components (typically a normal desktop user)
-RUST_LOG=info  # logging level for passkeyd
-
-# Advanced option: The front-end UI for selecting a passkey
-FRONT_ENROLL=passkeyd-enroll
-
-# Advanced option: The front-end UI for for passkey creation
-FRONT_SELECT=passkeyd-select
-
-# Advanced option: The front-end UI for verifying the user's presence.
-FRONT_SELECTION=passkeyd-selection
-```
 
 ### Passkeyd UI Custom Theme
 

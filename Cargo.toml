@@ -1,11 +1,13 @@
 [workspace]
 members = [
     "passkeyd",
-    "passkeyd-share",
-    "passkeyd-enroll",
-    "passkeyd-select",
+    "passkeyd-locale",
+    "passkeyd-abi",
     "passkeyd-manager",
-    "passkeyd-selection"
+    "passkeyd-migrate",
+    "passkeyd-ui/passkeyd-enroll",
+    "passkeyd-ui/passkeyd-select",
+    "passkeyd-ui/passkeyd-selection",
     ]
 resolver = "3"
 
@@ -15,8 +17,7 @@ iced = { version = "0.14.0", features = ["image", "advanced"] }
 serde = { version = "1.0.228", features=["derive"] }
 bytes = { version ="1.11.0", features=["serde"]}
 pam = "0.8.0"
-
-
+abi_stable = { version = "0.11.3" }
 [profile.dev]
 opt-level = 1
 debug = true

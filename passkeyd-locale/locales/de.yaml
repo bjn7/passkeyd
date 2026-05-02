@@ -1,0 +1,42 @@
+migrate:
+  main:
+    database_not_found: "Datenbank nicht gefunden."
+    malfored_metadata: "Fehlerhafte Metadaten gefunden. Die Datei wurde möglicherweise aktualisiert oder beschädigt. Sie wird übersprungen. Es werden nur ältere Dateiformate unterstützt."
+    malfored_passkey: "Fehlerhafter Passkey gefunden. Die Datei wurde möglicherweise aktualisiert oder beschädigt. Sie wird übersprungen. Es werden nur ältere Dateiformate unterstützt."
+    migration_success: "Alter Passkey für die Website %{site}, der dem Benutzerkonto %{user_account} zugeordnet ist, wurde migriert."
+    
+manager:
+  tui:
+    confirmation:
+      title: "Diese Aktion bestätigen?"
+      description: "Sind Sie sicher? Autorisieren Sie diese Anfrage, um zu beweisen, dass Sie die Löschtaste nicht versehentlich gedrückt haben."
+      button: "Autorisieren"
+
+  main:
+    root_access_required: "Führen Sie das System als root aus? Der Zugriff auf die Passkey-Liste erfordert Root-Rechte."
+
+ui:
+  enroll:
+    main:
+      title: "Passkey erstellen"
+      description_with_account: "Die Website %{site} fordert die Erstellung eines Passkeys für Ihr Benutzerkonto %{user_account} an."
+      description_without_account: "Die Website %{site} fordert die Erstellung eines Passkeys für Ihr Benutzerkonto %{user_account} an."
+      approve: "Autorisieren"
+
+  select:
+    authorize:
+      title_bar: "Sicherstellen, dass Sie es sind"
+      helper_text: "Authentifizierung fehlgeschlagen, bitte versuchen Sie es erneut."
+      password: "Geben Sie Ihre Passphrase ein"
+      description: "Geben Sie Ihre Passphrase ein, um diese Passkey-Anfrage zu autorisieren"
+    select:
+      title_bar: "Passkey auswählen"
+      description: "Die Website %{site} fordert die Verwendung eines Passkeys an."
+
+passkeyd:
+  cerds:
+    make:
+      presence_ui:
+        title: "Passkey-Auswahl"
+        description: "Diese Website fordert eine Authentifizierung an. Verwenden Sie diesen Passkey, um fortzufahren."
+        button: "Diesen Passkey verwenden"

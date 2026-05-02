@@ -1,7 +1,7 @@
 use std::io;
 
 use ctap_types::webauthn::PublicKeyCredentialRpEntity;
-use passkeyd_share::{
+use passkeyd_abi::{
     config::{self, Config},
     database::{remove_passkey, remove_table},
     utils::spawn_ui,
@@ -56,7 +56,7 @@ impl App {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::LightBlue));
 
-        let list: List<'_> = List::new(self.list.into_text())
+        let list: List<'_> = List::new(self.list.to_text())
             .block(border)
             .direction(ratatui::widgets::ListDirection::TopToBottom)
             .style(Style::default().fg(Color::White))
@@ -85,13 +85,18 @@ impl App {
                     event::KeyCode::Esc => self.list.switch_list(),
                     event::KeyCode::Delete => {
                         let confirmation = SelectionUIState {
-                            title: "Confirm this action?".into(),
-                            description: "Are you sure? Authorize this request to prove you didn't press the delete key by accident.".into(),
-                            button: "authorize".into()
+                            title: passkeyd_locale::translate!("manager.tui.confirmation.title")
+                                .into(),
+                            description: passkeyd_locale::translate!(
+                                "manager.tui.confirmation.description"
+                            )
+                            .into(),
+                            button: passkeyd_locale::translate!("manager.tui.confirmation.button")
+                                .into(),
                         };
                         let res = spawn_ui(
                             &self.config,
-                            passkeyd_share::utils::UI::KeySelection,
+                            passkeyd_abi::utils::UI::KeySelection,
                             confirmation,
                         )
                         .wait()

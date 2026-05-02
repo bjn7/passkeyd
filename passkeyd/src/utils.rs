@@ -1,3 +1,19 @@
+use der::{Encode, Sequence, asn1::UintRef};
+
+#[derive(Sequence)]
+struct EcdsaSignature<'a> {
+    pub r: UintRef<'a>,
+    pub s: UintRef<'a>,
+}
+fn translate_es256_to_der(r_bytes: &[u8], s_bytes: &[u8]) -> Vec<u8> {
+    let sig = EcdsaSignature {
+        r: UintRef::new(&r_bytes).expect("invalid r"),
+        s: UintRef::new(&s_bytes).expect("invalid s"),
+    };
+    sig.to_der().expect("DER-ASN.1 encoding failed")
+}
+
+
 // // use std::ops::{Deref, DerefMut};
 
 // use ctap_types::serde::{cbor_serialize_to, ser::Writer};

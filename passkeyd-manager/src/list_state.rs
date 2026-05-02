@@ -1,8 +1,8 @@
 use std::{fs, io};
 
 use ctap_types::{serde::cbor_deserialize, webauthn::PublicKeyCredentialRpEntity};
-use passkeyd_share::database::database_dir;
-use passkeyd_share::database::layout::{Passkey, StoredPasskey};
+use passkeyd_abi::database::database_dir;
+use passkeyd_abi::database::layout::{Passkey, StoreablePasskey};
 use ratatui::{text::Text, widgets::ListState};
 
 struct Database {
@@ -27,8 +27,8 @@ pub struct ListStateExt {
 }
 
 pub enum Selected {
-    Passkey(Passkey),
-    Website(PublicKeyCredentialRpEntity),
+    Passkey(Box<Passkey>),
+    Website(Box<PublicKeyCredentialRpEntity>),
 }
 
 impl ListStateExt {
@@ -80,7 +80,7 @@ impl ListStateExt {
                     continue;
                 }
                 let passkey_bytes = fs::read(passkey_entry.path())?;
-                let stored_passkey: StoredPasskey = cbor_deserialize(&passkey_bytes).unwrap();
+                let stored_passkey: StoreablePasskey = cbor_deserialize(&passkey_bytes).unwrap();
                 let mut passkey: Passkey = stored_passkey.try_into().unwrap();
 
                 if passkey.credential_source.rp_id.as_str() == ".dummy" {
@@ -97,14 +97,14 @@ impl ListStateExt {
 
         Ok(Self {
             index: SelectedIndex {
-                website: if database.len() > 0 {
+                website: if !database.is_empty() {
                     ListState::default().with_selected(Some(0))
                 } else {
                     ListState::default()
                 },
                 passkey: ListState::default(),
             },
-            database: database,
+            database,
             list_type: ListType::WebsiteList,
         })
     }
@@ -172,21 +172,21 @@ impl ListStateExt {
                 let passkey_index = self.selected_passkey_index()?;
                 let passkey = self.database[website_index].passkeys.remove(passkey_index);
                 self.sync_passkey_selection();
-                Some(Selected::Passkey(passkey))
+                Some(Selected::Passkey(Box::new(passkey)))
             }
             ListType::WebsiteList => {
                 let current_index = self.selected_website_index()?;
                 let db = self.database.remove(current_index);
                 self.sync_website_selection();
                 self.sync_passkey_selection();
-                Some(Selected::Website(db.rp))
+                Some(Selected::Website(Box::new(db.rp)))
             }
         }
     }
 
-    pub fn into_text(&self) -> Vec<Text<'static>> {
+    pub fn to_text(&self) -> Vec<Text<'static>> {
         // let x = self.database.get(self.index.website).unwrap();
-        if self.database.len() == 0 {
+        if self.database.is_empty() {
             return vec![Text::from("Not Entry Found\0")];
         }
 

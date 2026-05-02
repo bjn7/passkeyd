@@ -9,14 +9,15 @@ use pam::Client;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
-use passkeyd_share::config::Config;
-use passkeyd_share::database::{
+use passkeyd_abi::config::Config;
+use passkeyd_abi::database::{
     get_passkeys,
     layout::{OtherUI, Passkey},
 };
-use passkeyd_share::utils::{UI, spawn_ui};
+use passkeyd_abi::utils::{UI, spawn_ui};
 
-use crate::{cerds::translate_es256_to_der, ctaphid::CtapStatus, tpm};
+use crate::cryptography;
+use crate::ctaphid::CtapStatus;
 
 pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
     let mut passkeys = Vec::new();
@@ -34,9 +35,9 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
         None | Some(_) => None, //firefox wants None.
     };
     match req.allow_list {
-        Some(allow_cred) if allow_cred.len() > 0 => {
+        Some(allow_cred) if !allow_cred.is_empty() => {
             for cred in allow_cred {
-                if let Some((rp, passkey)) = Passkey::get(&rp_entity, &cred.id) {
+                if let Some((rp, passkey)) = Passkey::get(&rp_entity, cred.id) {
                     rp_entity = rp;
                     passkeys.push(passkey)
                 }
@@ -56,7 +57,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
         }
     };
 
-    if passkeys.len() < 1 {
+    if passkeys.is_empty() {
         anyhow::bail!(CtapStatus::NoCredentials)
     }
 
@@ -128,36 +129,13 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
 
     let auth_data_bytes = authenticator_data.serialize().unwrap();
     let mut signed_payload = auth_data_bytes.to_vec();
-    signed_payload.extend_from_slice(&req.client_data_hash);
+    signed_payload.extend_from_slice(req.client_data_hash);
 
-    let mut ctx = tpm::initialize_tpm_with_session()?;
-    let srk_key_handle = tpm::create_primary_key_handle(&mut ctx)?;
-
-    let signature = tpm::sign(
-        &mut ctx,
-        &srk_key_handle,
-        authorized_passkey
-            .credential_source
-            .private_key
-            .clone()
-            .try_into()
-            .unwrap(),
-        authorized_passkey
-            .credential_source
-            .public_key
-            .clone()
-            .try_into()
-            .unwrap(),
-        &mut signed_payload,
+    let mut crypto = cryptography::resolve_cryptography(config);
+    let (_, sign) = crypto.sign_payload(
+        authorized_passkey.credential_source.crypto_pair.clone(),
+        &signed_payload,
     )?;
-
-    let sig_bytes = match signature {
-        tss_esapi::structures::Signature::EcDsa(sig) => {
-            translate_es256_to_der(sig.signature_r().as_slice(), sig.signature_s().as_slice())
-        }
-        tss_esapi::structures::Signature::RsaSsa(sig) => sig.signature().to_vec(),
-        _ => unreachable!(),
-    };
 
     let mut response = ResponseBuilder {
         auth_data: authenticator_data.serialize().expect("failed to serialize"),
@@ -165,7 +143,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
             id: Bytes::from_slice(&authorized_passkey.credential_source.id).unwrap(),
             key_type: "public-key".into(),
         },
-        signature: Bytes::from_slice(&sig_bytes).expect("Unexpected number of bytes"),
+        signature: Bytes::from_slice(&sign).expect("Unexpected number of bytes"),
     }
     .build();
 
@@ -194,7 +172,7 @@ pub struct SelectionResponse {
     pub passphrase: String,
 }
 
-fn get_username_from_uid<'a>(uid: libc::uid_t) -> Option<String> {
+fn get_username_from_uid(uid: libc::uid_t) -> Option<String> {
     let mut passwd = MaybeUninit::uninit();
     let mut buff = vec![0; size_of::<libc::passwd>()];
     let mut result: *mut libc::passwd = std::ptr::null_mut();

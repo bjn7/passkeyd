@@ -1,0 +1,42 @@
+migrate:
+  main:
+    database_not_found: "Database not found."
+    malfored_metadata: "Found malformed metadata. The file may have been updated or corrupted. Skipping it. Only older file formats are supported"
+    malfored_passkey: "Found malformed Passkey. The file may have been updated or corrupted. Skipping it. Only older file formats are supported"
+    migration_success: "Old passkey for the website %{site} associated with user account %{user_account} has been migrated."
+
+manager:
+  tui:
+    confirmation:
+      title: "Confirm this action?"
+      description: "Are you sure? Authorize this request to prove you didn't press the delete key by accident."
+      button: "Authorize"
+
+  main:
+    root_access_required: "Are you running as root? Accessing the passkey list requires root privileges."
+
+ui:
+  enroll:
+    main:
+      title: "Create Passkey"
+      description_with_account: "The site %{site} is requesting to create a passkey for your user account %{user_account}."
+      description_without_account: "The site %{site} is requesting to create a passkey for your user account %{user_account}."
+      approve: "Authorize"
+
+  select:
+    authorize:
+      title_bar: "Making sure it's you"
+      helper_text: "Authentication failed, try again."
+      password: "Enter your passphrase"
+      description: "Enter your passphrase to authorize this passkey request"
+    select:
+      title_bar: "Select Passkey"
+      description: "The site %{site} is requesting to use a passkey."
+
+passkeyd:
+  cerds:
+    make:
+      presence_ui:
+        title: "Passkey Selection"
+        description: "This site is requesting authentication. Use this passkey to proceed"
+        button: "Use this passkey"

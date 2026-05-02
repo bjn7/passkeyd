@@ -1,0 +1,8 @@
+[package]
+name = "passkeyd-locale"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rust-i18n = '4.0.0'
+passkeyd-abi = { path = "../passkeyd-abi" }

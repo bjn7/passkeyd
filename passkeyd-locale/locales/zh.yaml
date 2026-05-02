@@ -1,0 +1,42 @@
+migrate:
+  main:
+    database_not_found: "未找到数据库。"
+    malfored_metadata: "发现损坏的元数据。文件可能已被更新或损坏，已跳过。仅支持较旧的文件格式。"
+    malfored_passkey: "发现损坏的通行密钥。文件可能已被更新或损坏，已跳过。仅支持较旧的文件格式。"
+    migration_success: "网站 %{site} 上与用户账户 %{user_account} 关联的旧通行密钥已成功迁移。"
+
+manager:
+  tui:
+    confirmation:
+      title: "确认此操作？"
+      description: "你确定吗？授权此请求，以证明你不是误按删除键。"
+      button: "授权"
+  main:
+    root_access_required: "你正在以 root 身份运行吗？访问密钥列表需要 root 权限。"
+
+ui:
+  enroll:
+    main:
+      title: "创建通行密钥"
+      description_with_account: "网站 %{site} 正在请求为你的用户账户 %{user_account} 创建通行密钥。"
+      description_without_account: "网站 %{site} 正在请求为你的用户账户 %{user_account} 创建通行密钥。"
+      approve: "授权"
+
+  select:
+    authorize:
+      title_bar: "确认身份"
+      helper_text: "身份验证失败，请重试。"
+      password: "输入你的口令"
+      description: "输入你的口令以授权此通行密钥请求"
+
+    select:
+      title_bar: "选择通行密钥"
+      description: "网站 %{site} 正在请求使用通行密钥。"
+
+passkeyd:
+  cerds:
+    make:
+      presence_ui:
+        title: "通行密钥选择"
+        description: "该网站正在请求身份验证。使用此通行密钥继续"
+        button: "使用此通行密钥"

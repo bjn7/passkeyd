@@ -19,7 +19,7 @@ pub fn collect_all_packet(
     let event = ctaphid.hid.read().expect("Failed to read hid events");
     if let OutputEvent::Output { data: report_bytes } = event {
         let raw_payload = &report_bytes[1..];
-        let ctaphid_packet: Packet<Vec<u8>> = Packet::try_from(&raw_payload[..]).unwrap();
+        let ctaphid_packet: Packet<Vec<u8>> = Packet::try_from(raw_payload).unwrap();
         match ctaphid_packet {
             Packet::Continuation(continuation_packet) => {
                 let channel_payload = ctaphid

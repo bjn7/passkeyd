@@ -5,7 +5,8 @@ edition = "2024"
 
 [dependencies]
 ratatui = "0.30.0"
-passkeyd-share = { path = "../passkeyd-share" }
+passkeyd-abi = { path = "../passkeyd-abi" }
+passkeyd-locale = { path = "../passkeyd-locale" }
 anyhow = "1.0.102"
 libc = "0.2.182"
 ctap-types.workspace = true
