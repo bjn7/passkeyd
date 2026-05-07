@@ -1,24 +1,20 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/bjn7/passkeyd/main/icons/banner-passkeyd-2.png" alt="Alt text" width="512">
   <br><br>
-  <strong>An Opinionated WebAuthn Authenticator Backed by a TPM</strong>
+  <strong>An Opinionated WebAuthn Authenticator</strong>
 </div>
 
 ---
 
 ## About
 
-Passkeyd is an implementation of a WebAuthn authenticator that uses a Trusted Platform Module (TPM) to manage passkeys and perform cryptographic operations securely.
+Passkeyd is a Linux based WebAuthn authenticator that works with any WebAuthn supported application, including browsers. It supports both TPM and non-TPM devices.
 
-### Contrubution
-
-There is a strong need for contributions. If you are willing to contribute, refer to [CONTRIBUTIONS.md](https://github.com/bjn7/passkeyd/blob/main/CONTRIBUTIONS.md)
-
-### Installation
+## Installation
 
 #### Install Binaries
 
-The package is aviable in the [passkeyd](https://aur.archlinux.org/packages/passkeyd) <sup>AUR</sup>, which you can install using aur helper, For exmaple
+The package is available in the [passkeyd](https://aur.archlinux.org/packages/passkeyd) <sup>AUR</sup>, which you can install using aur helper, For exmaple
 
 ```bash
 # Using yay
@@ -32,10 +28,6 @@ aura -A passkeyd
 
 ```
 
-#### Important
-
-It is highly recommended to have TPM 2.0. You can check this with the command `ls /dev/tpm*`. If this returns nothing, either you don’t have TPM or it isn’t functioning properly. You might want to switch to virtual cryptography via `/etc/passkeyd.conf`.
-
 #### Configure UID
 
 A passkey can be configured via `/etc/passkeyd.conf`. Only the user's UUID mentioned in the passkeyd configuration file can authorize the passkeyd request.
@@ -45,38 +37,21 @@ Run the command `id -u`, then modify the `GUI_UID` value in `/etc/passkeyd.conf`
 ```diff
 - GUI_UID=1000   # The UID of the user allowed to run GUI components (typically a normal desktop user)
 + GUI_UID=PLACE_YOUR_UID_HERE # The UID of the user allowed to run GUI components (typically a normal desktop user)
-RUST_LOG=info  # logging level for passkeyd
+```
 
-# Advanced option: The front-end UI for selecting a passkey
-FRONT_ENROLL=passkeyd-enroll
+#### Configure cryptography Mode
 
-# Advanced option: The front-end UI for for passkey creation
-FRONT_SELECT=passkeyd-select
+There are two modes for cryptography:
 
-# Advanced option: The front-end UI for verifying the user's presence.
-FRONT_SELECTION=passkeyd-selection 
+- **TPM (_Highly recommended_ )**: Fancy math is done at the hardware level (no one can sneak in, no one can access private data)
+- **Virtual** => Fancy math is done at the software level, without hardware support.
 
-# There are two modes for cryptography:
-# 1. TPM (Highly recommended) => Fancy math is done at the hardware level (no one can sneak in, no one can access private data)
-# 2. Virtual => Fancy math is done at the software level, without hardware support.
+You may execute the command `cat /sys/class/tpm/tpm0/device/description 2> /dev/null`. If this returns nothing, either you do not have a TPM or it is not functioning properly. It should return “TPM 2.0 Device,” as passkeyd is compatible with TPM 2.0.
 
-# It is 'HIGHLY' recommended to use TPM-based cryptography.
+You should switch to virtual cryptography only if you do not have a TPM or if your TPM is an older version. Otherwise, leave it set to yes.
 
-# IMPORTANT: NON-TPM KEYS ARE NOT ENCRYPTED AND ARE EXPOSED.
-# HOWEVER, they are stored with root privileges, so no one can access them without root access.
-
-# SUPER, SUPER, REALLY IMPORTANT:
-# YOU MUST HAVE TPM 2.0 IN ORDER TO USE TPM.
-# You can check this with the command `ls /dev/tpm*`.
-# If this returns nothing, either you don't have TPM or it isn't functioning properly.
-# You might want to switch to virtual cryptography.
-
+```bash
 USE_TPM_CRYPTOGRAPHY=yes # Can either be "yes" or "no"
-
-# The language is automatically selected based on system preferences, but can be forced to switch via this option.
-# Available language options:
-# de, en, fr, ru, zh
-# LANGUAGE=eu
 ```
 
 #### Start the Passkeyd Service
@@ -92,8 +67,6 @@ sudo systemctl start passkeyd
 2. Enter the username "Test" and click Register.
 3. You should see: "Success! Now try to authenticate..."
 4. Click authenticate, A passphrase popup will appear, Enter your logged-in Linux user passphrase.
-
-> Note: It works perfectly with Chromium-based browsers (e.g., Chrome, Brave, etc.). However, you may encounter issues in Firefox. If you experience any problems, open an issue.
 
 ### Passkeyd UI Custom Theme
 
@@ -123,6 +96,10 @@ The UI front-end can be swapped and is fully customizable For more information a
 ### Passkey Manager
 
 To manage your passkeys, enter the command `passkeyd-manager`. Press `Enter` or `Esc` to view the selected site's passkey. Press `Enter` or `Esc` again to go back. Pressing `Delete` while a website is selected will delete all of its passkeys, while pressing, `Delete` when a specific passkey is selected will delete that entry only. This will only remove it from the system, not from the website. After deleting it from the website (you may need to check the website for deletion from their end), you can delete it from your system as well, or vice versa. To exit, press `Ctrl + C`
+
+### Contrubution
+
+If you are willing to contribute, refer to [CONTRIBUTING.md](https://github.com/bjn7/passkeyd/blob/main/CONTRIBUTING.md)
 
 ### Alternatives
 

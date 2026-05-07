@@ -1,4 +1,4 @@
-## Contributions
+## CONTRIBUTING
 
 For any significant contribution, for example, working on any TODO item, CTAP2 command, or CTAPHID make sure to open an issue explicitly describing what you are going to work on. Also, check whether someone is already working on it before opening a new issue.
 
