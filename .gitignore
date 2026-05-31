@@ -2,3 +2,4 @@ Cargo.lock
 target
 TEMPP_DATABASE
 aur
+release-ppa.yml

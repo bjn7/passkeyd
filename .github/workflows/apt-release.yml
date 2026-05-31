@@ -1,0 +1,174 @@
+# follows https://wiki.debian.org/DebianRepository/Format
+
+name: Generate APT Flat Repo
+
+on:
+  # release:
+  # types: [published]
+
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag"
+        required: true
+
+jobs:
+  repackage-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Debian Packaging Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev debhelper devscripts gnupg gzip gh libtss2-dev
+
+      - name: Determine Version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then 
+            RAW_VERSION="${{ github.event.release.tag_name }}"
+          else
+            RAW_VERSION="${{ github.event.inputs.release_tag }}"
+          fi
+
+          VERSION="${RAW_VERSION#v}"
+
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Release Tag Version: $VERSION"
+
+      - name: Download Prebuilt Tarball
+        run: |
+          wget "https://github.com/bjn7/passkeyd/releases/download/v${{ env.VERSION }}/passkeyd-x86_64-unknown-linux-gnu.tar.gz"
+
+      - name: Extract Release Asset
+        run: |
+          mkdir -p build
+          tar xzf passkeyd-x86_64-unknown-linux-gnu.tar.gz -C build/
+
+      - name: Setup Debian Package
+        working-directory: build
+        env:
+          DEBFULLNAME: "GitHub Actions CI"
+          DEBEMAIL: "noreply@github.com"
+        run: |
+          mkdir -p debian/source
+
+          dch --create \
+              --package passkeyd \
+              -v "${{ env.VERSION }}-1" \
+              --distribution noble \
+              "Automated source release for Ubuntu Noble."
+
+
+          cat << 'EOF' > debian/control
+          Source: passkeyd
+          Section: utils
+          Priority: optional
+          Maintainer: GitHub Actions CI <noreply@github.com>
+          Build-Depends: debhelper-compat (= 13),
+                         cargo-1.91,
+                         rustc-1.91,
+                         clang,
+                         llvm-dev,
+                         libclang-dev,
+                         libpam0g-dev,
+                         libtss2-dev,
+          Standards-Version: 4.6.2
+
+          Package: passkeyd
+          Architecture: amd64
+          Depends: ${shlibs:Depends}, ${misc:Depends}, systemd
+          Description: An Opinionated WebAuthn Authenticator
+           Passkeyd is a Linux based WebAuthn authenticator that works with any WebAuthn supported application, including browsers. It supports both TPM and non-TPM devices.
+          EOF
+
+
+          cat << 'EOF' > debian/rules
+          #!/usr/bin/make -f
+
+          %:
+            dh $@
+
+          override_dh_auto_configure:
+            # Skip configuring
+
+          override_dh_auto_build:
+            # Skip configuring
+
+          override_dh_auto_test:
+            # Skip tests
+
+          override_dh_auto_install:
+            install -Dm755 passkeyd debian/passkeyd/usr/bin/passkeyd
+            install -Dm755 passkeyd-manager debian/passkeyd/usr/bin/passkeyd-manager
+            install -Dm755 passkeyd-migrate debian/passkeyd/usr/bin/passkeyd-migrate
+
+            # UI binary installation
+            install -Dm755 passkeyd-enroll debian/passkeyd/usr/lib/passkeyd/passkeyd-enroll
+            install -Dm755 passkeyd-select debian/passkeyd/usr/lib/passkeyd/passkeyd-select
+            install -Dm755 passkeyd-selection debian/passkeyd/usr/lib/passkeyd/passkeyd-selection
+
+            # Configuration files
+            install -Dm644 passkeyd.conf debian/passkeyd/etc/passkeyd.conf
+            install -Dm644 theme.conf debian/passkeyd/usr/share/passkeyd/theme.conf
+
+            # Systemd service
+            install -Dm644 passkeyd.service debian/passkeyd/lib/systemd/system/passkeyd.service
+
+            # Icons
+            install -Dm644 icons/32x32/passkeyd.png debian/passkeyd/usr/share/icons/hicolor/32x32/apps/passkeyd.png
+            install -Dm644 icons/64x64/passkeyd.png debian/passkeyd/usr/share/icons/hicolor/64x64/apps/passkeyd.png
+
+            # Database directory
+            install -d -m 700 debian/passkeyd/var/lib/passkeyd/database
+          EOF
+
+          # 2 spaces into tabs
+          sed -i 's/^  /\t/g' debian/rules
+          chmod +x debian/rules
+
+          echo "3.0 (quilt)" > debian/source/format
+
+      - name: Build Debian Package
+        working-directory: build
+        run: |
+          dpkg-buildpackage -us -uc -b -d
+          mkdir ../apt-release
+          mv ../*.deb ../apt-release/
+
+      - name: Generate Flat APT Repository Index
+        working-directory: apt-release
+        run: |
+          dpkg-scanpackages . /dev/null > Packages
+          sed -i 's|Filename: \./|Filename: |g' Packages
+
+          echo "Origin: GitHub Actions" > Release
+          echo "Label: Passkeyd APT Repo" >> Release
+          echo "Suite: stable" >> Release
+          echo "Codename: stable" >> Release
+          echo "Architectures: amd64" >> Release
+          echo "Description: Passkeyd Flat APT repository" >> Release
+          echo "Date: $(date -Ru)" >> Release
+          echo "SHA256:" >> Release
+          echo " $(sha256sum Packages | awk '{print $1}') $(wc -c < Packages) Packages" >> Release
+
+      - name: Sign Release
+        working-directory: apt-release
+        run: |
+          echo "${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}" | gpg --batch --import --quiet
+          KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk '{print $2}' | cut -d'/' -f2 | head -n1)
+          gpg --batch --armor --yes --clearsign -o InRelease Release
+          rm Release
+          gpg --export > passkeyd.gpg
+
+      - name: Upload Repositories back to the Same Release
+        working-directory: apt-release
+        run: |
+          gh release upload "v${{ env.VERSION }}" * --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

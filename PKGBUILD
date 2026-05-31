@@ -35,6 +35,6 @@ package() {
 
   # Icons
   install -Dm644 icons/32x32/passkeyd.png "$pkgdir/usr/share/icons/hicolor/32x32/apps/passkeyd.png"
-  install -Dm644 icons/64x64/passkeyd.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/passkeyd.png"
+  install -Dm644 icons/64x64/passkeyd.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/passkeyd.png"
 }
 
