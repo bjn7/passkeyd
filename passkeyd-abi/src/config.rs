@@ -55,15 +55,15 @@ impl Config {
 
         let front_enroll = config
             .get("FRONT_ENROLL")
-            .unwrap_or(&"passkeyd-enroll".to_string())
+            .unwrap_or(&"/usr/lib/passkeyd/passkeyd-enroll".to_string())
             .to_owned();
         let front_select = config
             .get("FRONT_SELECT")
-            .unwrap_or(&"passkeyd-select".to_string())
+            .unwrap_or(&"/usr/lib/passkeyd/passkeyd-select".to_string())
             .to_owned();
         let front_selection = config
             .get("FRONT_SELECTION")
-            .unwrap_or(&"passkeyd-selection".to_string())
+            .unwrap_or(&"/usr/lib/passkeyd/passkeyd-selection".to_string())
             .to_owned();
 
         let lang = config.get("LANGUAGE").map(String::to_owned);

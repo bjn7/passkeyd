@@ -146,11 +146,9 @@ impl UI {
         #[cfg(not(debug_assertions))]
         {
             match self {
-                UI::KeyEnroll => format!("/usr/lib/passkeyd/{}", config.front_enroll.as_str()),
-                UI::KeySelect => format!("/usr/lib/passkeyd/{}", config.front_select.as_str()),
-                UI::KeySelection => {
-                    format!("/usr/lib/passkeyd/{}", config.front_selection.as_str())
-                }
+                UI::KeyEnroll => config.front_enroll.to_owned(),
+                UI::KeySelect => config.front_select.to_owned(),
+                UI::KeySelection => config.front_selection.to_owned(),
             }
         }
     }
