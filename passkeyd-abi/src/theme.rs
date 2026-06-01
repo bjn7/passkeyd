@@ -1,4 +1,4 @@
-use std::{fs, process::exit};
+use std::{env, fs, process::exit};
 
 use iced::{
     Border, Color, Shadow, Vector,
@@ -46,7 +46,10 @@ pub struct StylisedTheme {
 
 impl Default for StylisedTheme {
     fn default() -> Self {
-        let contents = fs::read_to_string("/usr/share/passkeyd/theme.conf").unwrap();
+        let path = env::var("PASSKEYD_THEME_PATH")
+            .unwrap_or_else(|_| "/usr/share/passkeyd/theme.conf".to_string());
+
+        let contents = fs::read_to_string(path).unwrap();
         match toml::from_str(&contents) {
             Ok(theme) => theme,
             Err(_) => exit(2),
