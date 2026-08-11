@@ -4,3 +4,4 @@ TEMPP_DATABASE
 aur
 release-ppa.yml
 nix-release.yml
+.qmlls.ini

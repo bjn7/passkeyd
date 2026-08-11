@@ -71,11 +71,12 @@ To determine whether the passkey is working properly, you may follow this step.
 2. Enter the username "Test" and click Register.
 3. You should see: "Success! Now try to authenticate..."
 4. Click authenticate, A passphrase popup will appear, Enter your logged-in Linux user passphrase.
+
 </details>
 
 ## Passkeyd UI Custom Theme
 
-The config for theme can be found at `/usr/share/passkeyd/theme.conf`
+The configuration for the Ice user interface can be found at `/usr/share/passkeyd/theme.conf`. KDE and GTK user interfaces can also be configured through your system settings. If you need complete control over the user interface, you can build your own as well.
 
 ## Passkeyd Manager
 

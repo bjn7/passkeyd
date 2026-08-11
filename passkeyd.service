@@ -1,5 +1,5 @@
 [Unit]
-Description=Opinionated WebAuthn authenticator backed by a TPM
+Description=WebAuthn authenticator
 After=systemd-udevd.service
 
 [Service]

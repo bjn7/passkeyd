@@ -67,54 +67,65 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
             .iter()
             .map(|x| &x.credential_source.other_ui)
             .collect::<Vec<_>>(),
+        no_pass: config.no_pass,
     };
 
-    let ui = spawn_ui(config, UI::KeySelect, ui_state);
-    let result = ui
-        .wait_with_output()
-        .expect("failed to collect ui response");
+    let ui_response: SelectionResponse = if passkeys.len() == 1 && config.no_pass {
+        info!(
+            "Skipping UI spawn because only one passkey is available and no password is required."
+        );
+        SelectionResponse {
+            index: 0,
+            passphrase: String::new(),
+        }
+    } else {
+        let ui = spawn_ui(config, UI::KeySelect, ui_state);
+        let result = ui
+            .wait_with_output()
+            .expect("failed to collect ui response");
 
-    if !result.status.success() {
-        info!("The request was denied");
-        anyhow::bail!(CtapStatus::KeepaliveCancel);
-    }
+        if !result.status.success() {
+            info!("The request was denied");
+            anyhow::bail!(CtapStatus::KeepaliveCancel);
+        }
 
-    let stdout = &result.stdout;
+        let stdout = &result.stdout;
 
-    let start = stdout
-        .iter()
-        .position(|&x| x == 0x02)
-        .expect("missing STX marker in UI output");
-    let serialized = &stdout[start + 1..];
-    let ui_response: SelectionResponse = cbor_deserialize(serialized).unwrap();
-
-    // client isn't expected to send a username.
-    let Some(login_user) = get_username_from_uid(config.gui_uid) else {
-        error!("Failed to find username.");
-        anyhow::bail!(CtapStatus::OperationDenied)
+        let start = stdout
+            .iter()
+            .position(|&x| x == 0x02)
+            .expect("missing STX marker in UI output");
+        let serialized = &stdout[start + 1..];
+        cbor_deserialize(serialized).unwrap()
     };
 
-    let mut client = Client::with_password("system-auth").expect("Failed to init PAM client!");
-    client
-        .conversation_mut()
-        .set_credentials(login_user, ui_response.passphrase);
-    // Entering the wrong password more than the configured 'deny' attempts will lock your account. Even with the correct password, it will still report as invalid.
-    // To unlock the account, use the command: `faillock --user <username> --reset`, or wait for the configured lock time in PAM, which is usually around 600 seconds (10 minutes).
-    if client.authenticate().is_err() {
-        // If the retry count exceeds three, the client must
-        // assume the password is valid and return it,
-        // so the daemon can verify the password. If the password is wrong,
-        // it is clear that the retry limit has been exceeded.
-        // The client is considered untrusted, and the daemon,
-        // being the trusted entity, must validate
-        // anything sensitive carefully.
-        anyhow::bail!(CtapStatus::UvBlocked)
+    if !config.no_pass {
+        // client isn't expected to send a username.
+        let Some(login_user) = get_username_from_uid(config.gui_uid) else {
+            error!("Failed to find username.");
+            anyhow::bail!(CtapStatus::OperationDenied)
+        };
+
+        let mut client = Client::with_password("system-auth").expect("Failed to init PAM client!");
+        client
+            .conversation_mut()
+            .set_credentials(login_user, ui_response.passphrase);
+        // this was suppose to be placed inside of config, but whatever.
+        // Entering the wrong password more than the configured 'deny' attempts will lock your account. Even with the correct password, it will still report as invalid.
+        // To unlock the account, use the command: `faillock --user <username> --reset`, or wait for the configured lock time in PAM, which is usually around 600 seconds (10 minutes).
+        if client.authenticate().is_err() {
+            // If the retry count exceeds three, the client must
+            // assume the password is valid and return it,
+            // so the daemon can verify the password. If the password is wrong,
+            // it is clear that the retry limit has been exceeded.
+            // The client is considered untrusted, and the daemon,
+            // being the trusted entity, must validate
+            // anything sensitive carefully.
+            anyhow::bail!(CtapStatus::UvBlocked)
+        }
     }
 
-    let authorized_passkey = passkeys
-        .drain(ui_response.index..=ui_response.index)
-        .next()
-        .unwrap();
+    let authorized_passkey = passkeys.swap_remove(ui_response.index);
 
     let hash_result = sha2::Sha256::digest(req.rp_id.as_bytes());
     let rp_id_hash_array = hash_result.into();
@@ -164,6 +175,7 @@ pub fn get(config: &Config, req: Request) -> anyhow::Result<Response> {
 pub struct AuthorizationUI<'a> {
     pub rp: &'a PublicKeyCredentialRpEntity,
     pub other_uis: Vec<&'a OtherUI>,
+    pub no_pass: bool,
 }
 
 #[derive(Deserialize)]

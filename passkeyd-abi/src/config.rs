@@ -12,13 +12,12 @@ use std::{collections::HashMap, fs};
 #[derive(Debug)]
 pub struct Config {
     pub gui_uid: u32, // UID to create a under privilege child, to prevent GUI from running as root
-    #[allow(unused)]
     pub rust_log: String,
     pub front_enroll: String,
     pub front_select: String,
-    #[allow(unused)]
     pub front_selection: String,
     pub use_tpm_cryptography: bool,
+    pub no_pass: bool,
     pub lang: Option<String>,
 }
 
@@ -70,7 +69,9 @@ impl Config {
         let use_tpm_cryptography = config
             .get("USE_TPM_CRYPTOGRAPHY")
             .map(|x| x == "yes")
-            .unwrap_or(false);
+            .unwrap_or(true);
+
+        let no_pass = config.get("NO_PASS").map(|x| x == "yes").unwrap_or(false);
 
         unsafe {
             std::env::set_var("RUST_LOG", &rust_log);
@@ -78,6 +79,7 @@ impl Config {
 
         Ok(Config {
             lang,
+            no_pass,
             gui_uid,
             rust_log,
             front_enroll,

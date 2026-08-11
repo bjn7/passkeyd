@@ -19,7 +19,7 @@ use tss_esapi::{
     },
     structures::{
         self, Auth, Digest, EccPoint, EccScheme, HashcheckTicket, KeyDerivationFunctionScheme,
-        PcrSelectionListBuilder, PcrSlot, Private, Public, PublicBuilder,
+        PcrSelectionList, PcrSelectionListBuilder, PcrSlot, Private, Public, PublicBuilder,
         PublicEccParametersBuilder, Signature, SignatureScheme, SymmetricDefinition,
         SymmetricDefinitionObject,
     },
@@ -45,6 +45,21 @@ fn initialize_pass_session(ctx: &mut Context) {
     ctx.set_sessions((Some(AuthSession::Password), None, None));
 }
 
+// some duct tape function
+fn compute_explicit_pcr_digest(
+    ctx: &mut Context,
+    pcr_selection: PcrSelectionList,
+) -> anyhow::Result<Digest> {
+    let (_, _, pcr_data) = ctx.pcr_read(pcr_selection)?;
+    use sha2::Digest as ShaDigest;
+    let mut hasher = Sha256::new();
+    pcr_data
+        .value()
+        .iter()
+        .for_each(|pcr| hasher.update(pcr.value()));
+    Ok(Digest::try_from(hasher.finalize().as_slice())?)
+}
+
 fn initialize_policy_session(ctx: &mut Context) -> anyhow::Result<()> {
     ctx.set_sessions((None, None, None));
     let session_handle = ctx
@@ -65,7 +80,11 @@ fn initialize_policy_session(ctx: &mut Context) -> anyhow::Result<()> {
     let pcr_selection = PcrSelectionListBuilder::new()
         .with_selection(HashingAlgorithm::Sha256, &[PcrSlot::Slot7])
         .build()?;
-    ctx.policy_pcr(session_handle.try_into()?, Digest::default(), pcr_selection)?;
+
+    let pcr_digest = compute_explicit_pcr_digest(ctx, pcr_selection.clone())?;
+
+    ctx.policy_pcr(session_handle.try_into()?, pcr_digest, pcr_selection)?;
+    // ctx.policy_pcr(session_handle.try_into()?, Digest::default(), pcr_selection)?;
     ctx.set_sessions((Some(session_handle), None, None));
     debug!("TPM session set to PCR 7 policy.");
     Ok(())
@@ -92,7 +111,10 @@ pub fn get_pcr7_policy(ctx: &mut Context) -> anyhow::Result<Digest> {
     let pcr_selection = PcrSelectionListBuilder::new()
         .with_selection(HashingAlgorithm::Sha256, &[PcrSlot::Slot7])
         .build()?;
-    ctx.policy_pcr(session_handle.try_into()?, Digest::default(), pcr_selection)?;
+
+    let pcr_digest = compute_explicit_pcr_digest(ctx, pcr_selection.clone())?;
+    ctx.policy_pcr(session_handle.try_into()?, pcr_digest, pcr_selection)?;
+    // ctx.policy_pcr(session_handle.try_into()?, Digest::default(), pcr_selection)?;
     let p = ctx.policy_get_digest(session_handle.try_into()?)?;
     ctx.flush_context(ObjectHandle::from(SessionHandle::from(session_handle)))?;
     ctx.set_sessions(current_session);
@@ -165,7 +187,7 @@ pub fn sign(
         hierarchy: TPM2_RH_NULL,
         tag: TPM2_ST_HASHCHECK,
         ..Default::default()
-    }; 
+    };
 
     let validation = HashcheckTicket::try_from(ticket)?;
 

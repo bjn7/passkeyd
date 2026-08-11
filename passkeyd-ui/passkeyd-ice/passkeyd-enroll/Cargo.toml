@@ -1,5 +1,5 @@
 [package]
-name = "passkeyd-enroll"
+name = "passkeyd-ice-enroll"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,5 +8,5 @@ bytes.workspace =true
 serde.workspace = true
 iced.workspace = true
 ctap-types.workspace = true
-passkeyd-abi = { path = "../../passkeyd-abi" }
-passkeyd-locale = { path = "../../passkeyd-locale" }
+passkeyd-abi = { path = "../../../passkeyd-abi" }
+passkeyd-locale = { path = "../../../passkeyd-locale" }

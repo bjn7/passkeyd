@@ -30,7 +30,7 @@ jobs:
 
       - name: Determine Version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then 
+          if [ "${{ github.event_name }}" = "release" ]; then
             RAW_VERSION="${{ github.event.release.tag_name }}"
           else
             RAW_VERSION="${{ github.event.inputs.release_tag }}"

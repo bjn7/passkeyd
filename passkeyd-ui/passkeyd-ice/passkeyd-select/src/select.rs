@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct SelectionUI {
     pub rp: PublicKeyCredentialRpEntity,
     pub other_uis: Vec<OtherUI>,
+    pub no_pass: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

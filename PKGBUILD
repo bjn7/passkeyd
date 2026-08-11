@@ -1,16 +1,18 @@
 pkgname=passkeyd
 pkgver=1.8.0
-pkgrel=1
-pkgdesc="Opinionated WebAuthn authenticator backed by a TPM"
+pkgrel=5
+pkgdesc="Opinionated WebAuthn authenticator"
 arch=('x86_64')
 license=('GPL3')
-depends=("tpm2-tss")
+depends=("tpm2-tss" "systemd")
+conflicts=("openrc" "runit")
 makedepends=()
 url="https://github.com/bjn7/passkeyd"
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/bjn7/passkeyd/releases/download/v$pkgver/passkeyd-x86_64-unknown-linux-gnu.tar.gz")
-sha256sums=('39512cf8464658660d31987e91c5a48724879b28002a01036a0b1ee76c0deeea')
+sha256sums=('c61ffd4902fc701191a81c1d274e701a5b0cae8451c0c1ed3a1e3fbfdfdad268')
 options=('!debug')
 backup=('etc/passkeyd.conf' 'usr/share/passkeyd/theme.conf')
+install=passkeyd.install
 
 package() {
   cd "$srcdir"
@@ -18,10 +20,22 @@ package() {
   # Binary installation
   install -Dm755 passkeyd "$pkgdir/usr/bin/passkeyd"
   install -Dm755 passkeyd-manager "$pkgdir/usr/bin/passkeyd-manager"
-  install -Dm755 passkeyd-enroll "$pkgdir/usr/lib/passkeyd/passkeyd-enroll"
-  install -Dm755 passkeyd-select "$pkgdir/usr/lib/passkeyd/passkeyd-select"
-  install -Dm755 passkeyd-migrate "$pkgdir/usr/lib/passkeyd/passkeyd-migrate"
-  install -Dm755 passkeyd-selection "$pkgdir/usr/lib/passkeyd/passkeyd-selection"
+  install -Dm755 passkeyd-migrate "$pkgdir/usr/bin/passkeyd-migrate"
+
+# UI binary installation - ICE (Universal)
+  install -Dm755 passkeyd-ice-enroll "$pkgdir/usr/lib/passkeyd/passkeyd-ice-enroll"
+  install -Dm755 passkeyd-ice-select "$pkgdir/usr/lib/passkeyd/passkeyd-ice-select"
+  install -Dm755 passkeyd-ice-selection "$pkgdir/usr/lib/passkeyd/passkeyd-ice-selection"
+
+  # UI binary installation - KDE
+  install -Dm755 passkeyd-kde-enroll "$pkgdir/usr/lib/passkeyd/passkeyd-kde-enroll"
+  install -Dm755 passkeyd-kde-select "$pkgdir/usr/lib/passkeyd/passkeyd-kde-select"
+  install -Dm755 passkeyd-kde-selection "$pkgdir/usr/lib/passkeyd/passkeyd-kde-selection"
+
+  # UI binary installation - GTK
+  install -Dm755 passkeyd-gtk-enroll "$pkgdir/usr/lib/passkeyd/passkeyd-gtk-enroll"
+  install -Dm755 passkeyd-gtk-select "$pkgdir/usr/lib/passkeyd/passkeyd-gtk-select"
+  install -Dm755 passkeyd-gtk-selection "$pkgdir/usr/lib/passkeyd/passkeyd-gtk-selection"
 
   # Database directory
   install -d -m 700 -o root -g root "$pkgdir/var/lib/passkeyd/database"
@@ -37,4 +51,3 @@ package() {
   install -Dm644 icons/32x32/passkeyd.png "$pkgdir/usr/share/icons/hicolor/32x32/apps/passkeyd.png"
   install -Dm644 icons/64x64/passkeyd.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/passkeyd.png"
 }
-

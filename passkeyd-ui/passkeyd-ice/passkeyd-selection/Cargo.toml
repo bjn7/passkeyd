@@ -1,11 +1,11 @@
 [package]
-name = "passkeyd-selection"
+name = "passkeyd-ice-selection"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-passkeyd-abi = { path = "../../passkeyd-abi" }
-passkeyd-locale = { path = "../../passkeyd-locale" }
+passkeyd-abi = { path = "../../../passkeyd-abi" }
+passkeyd-locale = { path = "../../../passkeyd-locale" }
 anyhow = "1.0.102"
 iced.workspace = true
 ctap-types.workspace = true

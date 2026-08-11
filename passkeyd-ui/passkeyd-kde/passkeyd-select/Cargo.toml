@@ -1,0 +1,23 @@
+[package]
+name = "passkeyd-kde-select"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytes.workspace =true
+serde.workspace = true
+iced.workspace = true
+ctap-types.workspace = true
+passkeyd-abi = { path = "../../../passkeyd-abi" }
+passkeyd-locale = { path = "../../../passkeyd-locale" }
+pam.workspace = true
+whoami = "2.1.1"
+zeroize = "1.8.2"
+cxx.workspace = true
+cxx-qt.workspace = true
+cxx-qt-lib.workspace = true
+cxx-qt-lib-extras.workspace = true
+serde_json = "1.0.151"
+
+[build-dependencies]
+cxx-qt-build.workspace = true

@@ -12,6 +12,8 @@ use tss_esapi::{
     },
 };
 
+use crate::cryptography::tpm::tpm::get_pcr7_policy;
+
 pub fn make_cerd(
     ctx: &mut Context,
     srk_key_handle: &KeyHandle,
@@ -44,6 +46,7 @@ pub fn make_cerd(
         .with_name_hashing_algorithm(HashingAlgorithm::Sha256)
         .with_object_attributes(attributes)
         .with_rsa_unique_identifier(PublicKeyRsa::default())
+        .with_auth_policy(get_pcr7_policy(ctx)?)
         .build()
         .expect("failed to build public template");
 

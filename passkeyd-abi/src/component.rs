@@ -38,23 +38,17 @@ where
     .size(16)
     .class(theme::TextClass::ElevatedSurfacePrimaryText);
 
-    let user_display_name = if let Some(dname) = &other_ui.user.display_name {
-        text(dname.as_str())
-    } else if let Some(name) = &other_ui.user.name {
-        text(name.as_str())
-    } else {
-        text(
-            other_ui
-                .user
-                .id
-                .as_slice()
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<String>(),
-        )
-    }
-    .size(16)
-    .class(theme::TextClass::ElevatedSurfaceSecondaryText);
+    let user_display_name = other_ui
+        .user
+        .display_name
+        .as_ref()
+        .or(other_ui.user.name.as_ref())
+        .map(|s| text(s.as_str()))
+        .unwrap_or(text(
+            String::from_utf8_lossy(other_ui.user.id.as_slice()).to_string(),
+        ))
+        .size(16)
+        .class(theme::TextClass::ElevatedSurfaceSecondaryText);
 
     let user_info = container(column![site_title, user_display_name].padding([10, 0]))
         .align_y(Alignment::Center);

@@ -5,22 +5,33 @@ members = [
     "passkeyd-abi",
     "passkeyd-manager",
     "passkeyd-migrate",
-    "passkeyd-ui/passkeyd-enroll",
-    "passkeyd-ui/passkeyd-select",
-    "passkeyd-ui/passkeyd-selection",
-    ]
+    "passkeyd-ui/passkeyd-ice/*",
+    "passkeyd-ui/passkeyd-kde/*",
+    "passkeyd-ui/passkeyd-gtk/*",
+]
 resolver = "3"
 
 [workspace.dependencies]
 ctap-types = { version = "0.4.0", features = ["std"] }
+gtk4 = "0.11.4"
 iced = { version = "0.14.0", features = ["image", "advanced"] }
 serde = { version = "1.0.228", features=["derive"] }
 bytes = { version ="1.11.0", features=["serde"]}
 pam = "0.8.0"
-abi_stable = { version = "0.11.3" }
+cxx = "1.0.194"
+cxx-qt = "0.8.1"
+cxx-qt-lib = "0.8.1"
+cxx-qt-lib-extras = "0.8.1"
+cxx-qt-build = "0.8.1"
+
 [profile.dev]
 opt-level = 1
-debug = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.test.package."*"]
+opt-level = 3
 
 [profile.release]
 opt-level = "z"

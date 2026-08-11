@@ -44,6 +44,11 @@ impl StateMachine {
             MessageBridge::Selection(selection_message) => match selection_message {
                 select::UserResponse::Authorize(i) => {
                     *self.authorized_idx.borrow_mut() = i + 1;
+                    if let Flow::Selecting(selection) = &self.flow
+                        && selection.no_pass
+                    {
+                        return iced::exit();
+                    }
                     self.flow = Flow::Authorizing(AuthorizationUI::default());
                     focus_next()
                 }
@@ -113,20 +118,34 @@ pub fn main() -> ExitCode {
             .expect("Failed to read input");
         let selection_ui: SelectionUI =
             cbor_deserialize(&state_buffer).expect("Invalid cbor received");
+        let needs_selection = selection_ui.other_uis.len() > 1;
+        let skip_password = selection_ui.no_pass;
 
-        StateMachine {
-            authorized_idx: if selection_ui.other_uis.len() > 1 {
+        let state = StateMachine {
+            authorized_idx: if needs_selection {
                 Rc::clone(&authorized_idx_clone)
             } else {
                 *authorized_idx_clone.borrow_mut() = 1;
                 Rc::clone(&authorized_idx_clone)
             },
             password: Rc::clone(&authorized_password_clone),
-            flow: if selection_ui.other_uis.len() > 1 {
+            flow: if needs_selection {
                 Flow::Selecting(Box::new(selection_ui))
             } else {
                 Flow::Authorizing(AuthorizationUI::default())
             },
+        };
+
+        if !needs_selection && skip_password {
+            if write_output(0, &mut authorized_password_clone.borrow_mut()).is_err() {
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+            // (state, iced::exit())
+        } else if !needs_selection {
+            (state, focus_next())
+        } else {
+            (state, Task::none())
         }
     };
 
@@ -210,6 +229,7 @@ mod tests {
                 icon: None,
             },
             other_uis: other_ui,
+            no_pass: true,
         };
         let serialized_data =
             cbor_serialize(&authorization_ui, &mut buffer[..]).expect("Serialization failed");
