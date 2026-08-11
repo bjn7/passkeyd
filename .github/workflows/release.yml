@@ -20,7 +20,7 @@ jobs:
 
       - name: Install sys dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y clang llvm-dev libclang-dev libpam0g-dev libtss2-dev  gh
+          sudo apt-get update && sudo apt-get install -y clang llvm-dev libclang-dev libpam0g-dev libtss2-dev gh libglib2.0-dev pkg-config cmake libgtk-4-dev qt6-base-dev qt6-declarative-dev
 
       - name: Compile
         run: cargo build --release --target x86_64-unknown-linux-gnu
