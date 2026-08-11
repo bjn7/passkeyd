@@ -68,7 +68,7 @@ sudo systemctl start passkeyd
 To determine whether the passkey is working properly, you may follow this step.
 
 1. Go to the [Webauthn Demo Site](https://webauthn.io)
-2. Enter the username "Test" and click Register.
+2. Enter the any username and click Register.
 3. You should see: "Success! Now try to authenticate..."
 4. Click authenticate, A passphrase popup will appear, Enter your logged-in Linux user passphrase.
 
