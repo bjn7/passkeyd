@@ -64,6 +64,28 @@ jobs:
               --distribution noble \
               "Automated source release for Ubuntu Noble."
 
+          cat << 'EOF' > debian/postinst
+          #!/bin/bash
+          set -e
+          EOF
+
+          cat ../passkeyd.install >> debian/postinst
+
+          cat << 'EOF' >> debian/postinst
+          case "$1" in
+              configure)
+                  if [ -z "$2" ]; then
+                      post_install
+                  else
+                      post_upgrade
+                  fi
+                  ;;
+          esac
+          #DEBHELPER#
+          exit 0
+          EOF
+
+          chmod +x debian/postinst
 
           cat << 'EOF' > debian/control
           Source: passkeyd
@@ -109,9 +131,17 @@ jobs:
             install -Dm755 passkeyd-migrate debian/passkeyd/usr/bin/passkeyd-migrate
 
             # UI binary installation
-            install -Dm755 passkeyd-enroll debian/passkeyd/usr/lib/passkeyd/passkeyd-enroll
-            install -Dm755 passkeyd-select debian/passkeyd/usr/lib/passkeyd/passkeyd-select
-            install -Dm755 passkeyd-selection debian/passkeyd/usr/lib/passkeyd/passkeyd-selection
+            install -Dm755 passkeyd-ice-enroll debian/passkeyd/usr/lib/passkeyd/passkeyd-ice-enroll
+            install -Dm755 passkeyd-ice-select debian/passkeyd/usr/lib/passkeyd/passkeyd-ice-select
+            install -Dm755 passkeyd-ice-selection debian/passkeyd/usr/lib/passkeyd/passkeyd-ice-selection
+
+            install -Dm755 passkeyd-kde-enroll debian/passkeyd/usr/lib/passkeyd/passkeyd-kde-enroll
+            install -Dm755 passkeyd-kde-select debian/passkeyd/usr/lib/passkeyd/passkeyd-kde-select
+            install -Dm755 passkeyd-kde-selection debian/passkeyd/usr/lib/passkeyd/passkeyd-kde-selection
+
+            install -Dm755 passkeyd-gtk-enroll debian/passkeyd/usr/lib/passkeyd/passkeyd-gtk-enroll
+            install -Dm755 passkeyd-gtk-select debian/passkeyd/usr/lib/passkeyd/passkeyd-gtk-select
+            install -Dm755 passkeyd-gtk-selection debian/passkeyd/usr/lib/passkeyd/passkeyd-gtk-selection
 
             # Configuration files
             install -Dm644 passkeyd.conf debian/passkeyd/etc/passkeyd.conf
