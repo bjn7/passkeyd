@@ -30,6 +30,7 @@ pub struct Ctaphid {
     pub hid: hid::UHIDDevice<File>,
     pub payload_stack: HashMap<HashableChannel, ChannelPayload>,
     pub ephemeral_secret: p256::ecdh::EphemeralSecret,
+    cancelled: HashMap<HashableChannel, bool>,
 }
 
 impl Ctaphid {
@@ -42,7 +43,19 @@ impl Ctaphid {
             hid: hid::create_hid().expect("Failed to create HID, are you root?"),
             payload_stack: HashMap::with_capacity(10),
             ephemeral_secret: secret_key,
+            cancelled: HashMap::with_capacity(10),
         }
+    }
+
+    // fn cancel(&mut self, channel: HashableChannel) {
+    //     self.cancelled.insert(channel, true);
+    // }
+
+    pub fn is_cancelled(&self, channel: Channel) -> bool {
+        self.cancelled
+            .get(&channel.into())
+            .copied()
+            .unwrap_or(false)
     }
 
     pub fn get_webauthn(&mut self) -> ReturnEvent {
@@ -121,8 +134,11 @@ impl Ctaphid {
             Command::Ping => {
                 self.send_response(channel, Command::Ping, data)?;
             }
-            // ignore all cancel request.
-            Command::Cancel => (),
+            Command::Cancel => {
+                // This is for handlers/selection.rs
+                // to handle cancellation
+                self.cancelled.insert(channel.into(), true);
+            }
             Command::Cbor => {
                 return Ok(Some((channel, data)));
             }

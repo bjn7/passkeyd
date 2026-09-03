@@ -5,6 +5,7 @@ mod cerds;
 mod cryptography;
 mod ctaphid;
 mod handlers;
+mod utils;
 
 fn main() -> anyhow::Result<()> {
     let config = config::Config::initialize()?;

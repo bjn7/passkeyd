@@ -5,6 +5,7 @@
 use std::convert::TryFrom;
 use std::fs::{File, OpenOptions};
 use std::io::{self, prelude::*};
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -614,5 +615,15 @@ impl UHIDDevice<File> {
         let event: [u8; UHID_EVENT_SIZE] = InputEvent::Create(params).into();
         handle.write_all(&event)?;
         Ok(UHIDDevice { handle })
+    }
+
+    pub fn is_readable(&self) -> bool {
+        let mut poolfd = libc::pollfd {
+            fd: self.handle.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ret = unsafe { libc::poll(&mut poolfd, 1, 0) };
+        ret > 0 && (poolfd.revents & libc::POLLIN != 0)
     }
 }

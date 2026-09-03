@@ -1,8 +1,16 @@
+use ctaphid_types::{Channel, DeviceError};
 use thiserror::Error;
 #[allow(clippy::module_inception)]
 pub mod ctaphid;
 mod hid;
 mod utils;
+
+#[derive(Debug, Error)]
+#[error("channel busy: {channel:?}")]
+pub struct TransportError {
+    pub channel: Channel,
+    pub err: DeviceError,
+}
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]

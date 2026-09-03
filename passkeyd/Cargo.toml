@@ -27,3 +27,6 @@ pam.workspace = true
 passkeyd-abi = { path = "../passkeyd-abi" }
 passkeyd-locale = { path = "../passkeyd-locale" }
 rsa = { version = "0.9.10", features = ["serde"] }
+
+[build-dependencies]
+cc = "1.4.4"

@@ -58,7 +58,7 @@ impl CryptoBackend for Virtual {
                 }
                 VirtualKeyPair::Rs256(mut boxed) => {
                     let signature: rsa::pkcs1v15::Signature = boxed.as_mut().0.sign(payload);
-                    Ok((-7, rsa::signature::SignatureEncoding::to_vec(&signature)))
+                    Ok((-257, rsa::signature::SignatureEncoding::to_vec(&signature)))
                 }
             }
         } else {

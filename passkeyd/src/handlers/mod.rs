@@ -23,7 +23,7 @@ pub fn dispatch(
     let cmd_name = get_request_name(&request);
 
     debug!(
-        "Received CTAP instruction: '{}' on channel {:?}",
+        "Received CTAP instruction: '{}' on channel {}",
         cmd_name, channel
     );
 

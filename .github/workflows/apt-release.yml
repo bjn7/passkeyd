@@ -26,7 +26,7 @@ jobs:
       - name: Install Debian Packaging Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev debhelper devscripts gnupg gzip gh libtss2-dev libgtk-4-dev qt6-base-dev qt6-declarative-dev
+          sudo apt-get install -y dpkg-dev debhelper devscripts gnupg gzip gh libudev-dev libtss2-dev libgtk-4-dev qt6-base-dev qt6-declarative-dev
 
       - name: Determine Version
         run: |
@@ -100,6 +100,7 @@ jobs:
                          libclang-dev,
                          libpam0g-dev,
                          libtss2-dev,
+                         libudev-dev,
           Standards-Version: 4.6.2
 
           Package: passkeyd

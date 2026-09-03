@@ -1,5 +1,11 @@
 use crate::cryptography;
 use crate::ctaphid::CtapStatus;
+use crate::ctaphid::ctaphid::Ctaphid;
+use crate::utils::cancellable_ui;
+use crate::utils::has_another_fido_device;
+
+use std::process::ExitStatus;
+
 use ctap_types::Bytes;
 use ctap_types::ctap2::AttestationStatement;
 use ctap_types::ctap2::AttestationStatementFormat;
@@ -12,64 +18,45 @@ use ctap_types::ctap2::make_credential::Request;
 use ctap_types::ctap2::make_credential::Response;
 use ctap_types::ctap2::make_credential::ResponseBuilder;
 use ctap_types::webauthn;
-use ctap_types::webauthn::PublicKeyCredentialRpEntity;
+use ctaphid_types::Channel;
 use passkeyd_abi::config::Config;
+use passkeyd_abi::cryptography::CryptoBackend;
+use passkeyd_abi::cryptography::CryptoPair;
 use passkeyd_abi::database;
-use passkeyd_abi::database::layout::{OtherUI, Passkey};
+use passkeyd_abi::database::layout::Passkey;
 use passkeyd_abi::utils::Cose;
+use passkeyd_abi::utils::EnrollUI;
+use passkeyd_abi::utils::PresenceUI;
 use passkeyd_abi::utils::UI;
 use passkeyd_abi::utils::spawn_ui;
-use serde::Serialize;
 
 use super::{ALGO_ES256, ALGO_RS256};
 use log::{debug, info};
 use sha2::Digest;
 
-pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
-    if let (Some(exclude_list), Some((_, passkeys))) =
-        (req.exclude_list, database::get_passkeys(&req.rp))
-    {
-        let exists = exclude_list.iter().any(|desc| {
-            passkeys
-                .iter()
-                .any(|key| *desc.id == key.credential_source.id)
-        });
-
-        if exists {
-            // optional todo!: asking for user presence using passkey selection before proceeding
-            anyhow::bail!(CtapStatus::CredentialExcluded);
-        }
-    }
+pub fn make(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    config: &Config,
+    req: Request,
+) -> anyhow::Result<Response> {
+    check_excluded_credential(hid, channel, config, &req)?;
 
     let mut crypto = cryptography::resolve_cryptography(config);
-    let algos = req.pub_key_cred_params.0;
-
-    let (crypto_pair, cose) = if algos
-        .contains(&webauthn::KnownPublicKeyCredentialParameters { alg: ALGO_ES256 })
-    {
-        // let it crash
-        crypto.generate_es256_keypair().unwrap()
-    } else if algos.contains(&webauthn::KnownPublicKeyCredentialParameters { alg: ALGO_RS256 }) {
-        crypto.generate_rs256_keypair().unwrap()
-    } else {
-        anyhow::bail!(CtapStatus::UnsupportedAlgorithm)
-    };
-
+    let (crypto_pair, credential_public_key) = generate_credentials(crypto.as_mut(), &req)?;
     debug!("Generated wrapped private and public keys");
-
     let passkey = Passkey::new(req.rp.id.clone(), req.user.clone(), crypto_pair);
 
     let attested_credential = AttestedCredentialData {
         aaguid: &[0u8; 16],
         credential_id: &passkey.credential_source.id,
-        credential_public_key: match &cose {
-            Cose::ES256(c) => c.as_slice(),
-            Cose::RS256(c) => c.as_slice(),
+        credential_public_key: match &credential_public_key {
+            Cose::ES256(key) => key.as_slice(),
+            Cose::RS256(key) => key.as_slice(),
         },
     };
 
-    let hash_result = sha2::Sha256::digest(req.rp.id.as_bytes());
-    let rp_id_hash_array = hash_result.into();
+    let rp_id_hash = sha2::Sha256::digest(req.rp.id.as_bytes()).into();
 
     let authenticator_data: AuthenticatorData<'_, AttestedCredentialData<'_>, Extensions> =
         AuthenticatorData {
@@ -78,7 +65,7 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
             flags: AuthenticatorDataFlags::ATTESTED_CREDENTIAL_DATA
                 | AuthenticatorDataFlags::USER_PRESENCE
                 | AuthenticatorDataFlags::USER_VERIFIED,
-            rp_id_hash: &rp_id_hash_array,
+            rp_id_hash: &rp_id_hash,
             extensions: None,
         };
 
@@ -86,7 +73,7 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
     let mut signed_payload = auth_data_bytes.to_vec();
     signed_payload.extend_from_slice(req.client_data_hash);
 
-    let (sign_alg, sign) = crypto.sign_payload(
+    let (sign_algo, sign) = crypto.sign_payload(
         passkey.credential_source.crypto_pair.clone(),
         &signed_payload,
     )?;
@@ -100,7 +87,7 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
     .build();
 
     res.att_stmt = Some(AttestationStatement::Packed(PackedAttestationStatement {
-        alg: sign_alg,
+        alg: sign_algo,
         sig: Bytes::from_slice(&sign).expect("Unexpected number of bytes"),
         x5c: None,
     }));
@@ -126,51 +113,111 @@ pub fn make(config: &Config, req: Request) -> anyhow::Result<Response> {
 
     info!("Looking for user authorization...");
 
-    let cerds_ui = AuthorizationUI {
-        rp: &req.rp,
-        other_ui: &passkey.credential_source.other_ui,
-    };
-
-    let presence_ui = SelectionUI {
-        title: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.title"),
-        description: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.description"),
-        button: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.button"),
-    };
-
     // In CTAP2.0, a MakeCredential request is sent as a backward-compatible replacement for the Selection command.
     // https://source.chromium.org/chromium/chromium/src/+/main:device/fido/make_credential_task.cc;drc=eb40dba9a062951578292de39424d7479f723463;l=66
 
-    let is_selection_request = matches!(req.rp.id.as_str(), ".dummy" | "make.me.blink");
+    let is_selection_req = matches!(req.rp.id.as_str(), ".dummy" | "make.me.blink");
 
-    let mut ui_handle = if is_selection_request {
-        spawn_ui(config, UI::KeySelection, presence_ui)
+    let status = if is_selection_req {
+        request_selection(hid, channel, config)?
     } else {
-        spawn_ui(config, UI::KeyEnroll, cerds_ui)
+        cancellable_ui(
+            hid,
+            channel,
+            spawn_ui(
+                config,
+                UI::KeyEnroll,
+                EnrollUI {
+                    rp: &req.rp,
+                    other_ui: &passkey.credential_source.other_ui,
+                },
+            ),
+        )?
+        .exit_status
     };
 
-    let result = ui_handle.wait().expect("failed to collect UI response");
-
-    if result.code().unwrap_or_default() != 0 {
+    if !status.success() {
         info!("Authorization denied");
         anyhow::bail!(CtapStatus::OperationDenied);
     }
 
-    if !is_selection_request {
+    if !is_selection_req {
         passkey.store(req.rp);
     }
 
     Ok(res)
 }
 
-#[derive(Serialize)]
-pub struct AuthorizationUI<'a> {
-    pub rp: &'a PublicKeyCredentialRpEntity,
-    pub other_ui: &'a OtherUI,
+fn check_excluded_credential(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    config: &Config,
+    req: &Request,
+) -> anyhow::Result<()> {
+    let Some(exclude_list) = &req.exclude_list else {
+        return Ok(());
+    };
+
+    let Some((_, passkeys)) = database::get_passkeys(&req.rp) else {
+        return Ok(());
+    };
+
+    let excluded = exclude_list.iter().any(|descriptor| {
+        passkeys
+            .iter()
+            .any(|passkey| *descriptor.id == passkey.credential_source.id)
+    });
+
+    if !excluded {
+        return Ok(());
+    }
+
+    // If another authenticator is present, ask the user persence
+    if has_another_fido_device() {
+        request_selection(hid, channel, config)?;
+
+        info!("Excluded credential detected");
+    }
+
+    anyhow::bail!(CtapStatus::CredentialExcluded);
 }
 
-#[derive(Serialize)]
-pub struct SelectionUI<'a> {
-    pub description: &'a str,
-    pub title: &'a str,
-    pub button: &'a str,
+fn request_selection(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    config: &Config,
+) -> anyhow::Result<ExitStatus> {
+    Ok(cancellable_ui(
+        hid,
+        channel,
+        spawn_ui(
+            config,
+            UI::KeySelection,
+            PresenceUI {
+                title: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.title"),
+                description: &passkeyd_locale::translate!(
+                    "passkeyd.cerds.make.presence_ui.description"
+                ),
+                button: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.button"),
+            },
+        ),
+    )?
+    .exit_status)
+}
+
+fn generate_credentials(
+    crypto: &mut dyn CryptoBackend,
+    req: &Request,
+) -> anyhow::Result<(CryptoPair, Cose)> {
+    let algos = &req.pub_key_cred_params.0;
+
+    if algos.contains(&webauthn::KnownPublicKeyCredentialParameters { alg: ALGO_ES256 }) {
+        return crypto.generate_es256_keypair().map_err(anyhow::Error::msg);
+    }
+
+    if algos.contains(&webauthn::KnownPublicKeyCredentialParameters { alg: ALGO_RS256 }) {
+        return crypto.generate_rs256_keypair().map_err(anyhow::Error::msg);
+    }
+
+    anyhow::bail!(CtapStatus::UnsupportedAlgorithm);
 }

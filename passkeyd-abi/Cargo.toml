@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bytes.workspace =true
 serde.workspace = true
+libc = "^0.2.150"
 iced.workspace = true
 ctap-types.workspace = true
 toml = "1.0.3"
@@ -21,3 +22,4 @@ anyhow = "1.0.100"
 p256={ version = "0.13.2", features = ["arithmetic", "ecdh", "serde"] }
 rsa = { version = "0.9.10", features = ["serde"] }
 sha2 = { version = "0.10.9", features = ["oid"] }
+uuid = { version = "1.26.0", features = ["v4"] }

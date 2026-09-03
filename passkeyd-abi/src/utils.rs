@@ -1,13 +1,16 @@
 // use std::ops::{Deref, DerefMut};
-use ctap_types::serde::{cbor_serialize_to, ser::Writer};
+use crate::{config::Config, database::layout::OtherUI};
+use ctap_types::{
+    serde::{cbor_serialize_to, ser::Writer},
+    webauthn::PublicKeyCredentialRpEntity,
+};
 use log::debug;
 use serde::Serialize;
 use std::{
     io::Write,
-    process::{Child, Stdio},
+    process::{Child, Command, Stdio},
 };
-
-use crate::config::Config;
+use uuid::Uuid;
 
 #[derive(Default)]
 pub struct CborVec(pub Vec<u8>);
@@ -70,15 +73,18 @@ pub enum Cose {
 
 pub fn encode_cose_es256(x: &[u8; 32], y: &[u8; 32]) -> Cose {
     let mut out = [0u8; 77];
+
+    // Just wanna say, this bytes are crafted manually,
+    // because, free will
     out[0] = 0xA5; //map with 5 elementss
 
-    out[1] = 0x01; //key type (1) 
+    out[1] = 0x01; //key type (1)
     out[2] = 0x02; //ec2 (2)
 
     out[3] = 0x03; //ago 3
     out[4] = 0x26; // es256 -7
 
-    out[5] = 0x20; //crv 
+    out[5] = 0x20; //crv
     out[6] = 0x01; //256 1
 
     out[7] = 0x21; // x -2
@@ -97,7 +103,7 @@ pub fn encode_cose_rs256(n: &[u8; 256], e: &[u8; 3]) -> Cose {
     let mut out = [0u8; 273];
     out[0] = 0xA4; //map with 4 elementss
 
-    out[1] = 0x01; //key type (3) 
+    out[1] = 0x01; //key type (3)
     out[2] = 0x03; //rsa (2)
 
     out[3] = 0x03; //ago 3
@@ -137,9 +143,9 @@ impl UI {
                 .to_string_lossy()
                 .to_string();
             match self {
-                UI::KeyEnroll => format!("{target_dir}/{}", "passkeyd-enroll"),
-                UI::KeySelect => format!("{target_dir}/{}", "passkeyd-select"),
-                UI::KeySelection => format!("{target_dir}/{}", "passkeyd-selection"),
+                UI::KeyEnroll => format!("{target_dir}/{}", "passkeyd-ice-enroll"),
+                UI::KeySelect => format!("{target_dir}/{}", "passkeyd-ice-select"),
+                UI::KeySelection => format!("{target_dir}/{}", "passkeyd-ice-selection"),
             }
         }
 
@@ -154,29 +160,80 @@ impl UI {
     }
 }
 
+pub struct SystemdChild {
+    pub inner: Child,
+    unit: String,
+    uid: u32,
+}
+
+impl SystemdChild {
+    pub fn kill(&mut self) -> std::io::Result<()> {
+        // No need for killing inner, as
+        // --wait is passed in systemd
+        Command::new("systemctl")
+            .arg(format!("--machine={}@", self.uid))
+            .arg("--user")
+            .arg("kill")
+            .arg("-s")
+            .arg("SIGKILL")
+            .arg(&self.unit)
+            .status()?;
+
+        Ok(())
+    }
+}
+
 // Util function
-pub fn spawn_ui<State>(config: &Config, ui: UI, state: State) -> Child
+pub fn spawn_ui<State>(config: &Config, ui: UI, state: State) -> SystemdChild
 where
     State: Serialize,
 {
     let mut state_buffer = CborVec::default();
     let cbor = cbor_serialize_to(&state, &mut state_buffer).unwrap();
-    debug!("Spawning ui");
-    let mut command = std::process::Command::new("systemd-run")
+    debug!("Spawning UI");
+    let unit = format!("passkeyd-interface-{}", Uuid::new_v4());
+    let mut child = std::process::Command::new("systemd-run")
         .arg(format!("--machine={}@", config.gui_uid))
         .arg("--user")
         .arg("--collect")
         .arg("--wait")
         .arg("--quiet")
+        .arg("--unit")
+        .arg(unit.clone())
         .arg("--pipe")
         .arg(ui.as_str_path(config))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
         .expect("Failed to spawn UI, are you root?");
-    let mut stdin = command.stdin.take().expect("Failed to get stdin");
+    let mut stdin = child.stdin.take().expect("Failed to get stdin");
     stdin
         .write_all(&state_buffer.0[..cbor])
         .expect("Failed to write into pipe");
-    command
+
+    SystemdChild {
+        inner: child,
+        uid: config.gui_uid,
+        unit,
+    }
+}
+
+#[derive(Serialize)]
+pub struct PresenceUI<'a> {
+    pub description: &'a str,
+    pub title: &'a str,
+    pub button: &'a str,
+}
+
+#[derive(Serialize)]
+pub struct EnrollUI<'a> {
+    pub rp: &'a PublicKeyCredentialRpEntity,
+    pub other_ui: &'a OtherUI,
+}
+
+#[derive(Serialize)]
+pub struct SelectUI<'a> {
+    pub rp: &'a PublicKeyCredentialRpEntity,
+    pub other_uis: Vec<&'a OtherUI>,
+    pub no_pass: bool,
 }

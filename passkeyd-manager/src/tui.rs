@@ -99,6 +99,7 @@ impl App {
                             passkeyd_abi::utils::UI::KeySelection,
                             confirmation,
                         )
+                        .inner
                         .wait()
                         .unwrap();
 
