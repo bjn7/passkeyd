@@ -10,6 +10,13 @@ use std::{collections::HashMap, fs};
 // If someone is dumb enough to run random stuff with privileges, they should just to Windows with windows defender turned on.
 
 #[derive(Debug)]
+pub enum Auth {
+    FPRINT,
+    PASS,
+    PAM,
+}
+
+#[derive(Debug)]
 pub struct Config {
     pub gui_uid: u32, // UID to create a under privilege child, to prevent GUI from running as root
     pub rust_log: String,
@@ -19,6 +26,7 @@ pub struct Config {
     pub use_tpm_cryptography: bool,
     pub no_pass: bool,
     pub lang: Option<String>,
+    pub auth: Auth,
 }
 
 const PASSKEY_CONFIG_PATH: &str = "/etc/passkeyd.conf";
@@ -86,6 +94,7 @@ impl Config {
             front_select,
             front_selection,
             use_tpm_cryptography,
+            auth: Auth::PASS,
         })
     }
 }

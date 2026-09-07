@@ -237,3 +237,35 @@ pub struct SelectUI<'a> {
     pub other_uis: Vec<&'a OtherUI>,
     pub no_pass: bool,
 }
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub enum UIMessage {
+    SelectionDoneMaybeStartAuth(usize),
+    // assuming, the device is fine, non-hacked.
+    // and, no need to do zero bytes
+    PAMAnswer(String),
+    Password(String),
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub enum ServiceMessage {
+    FallbackToPassword(FallbackToPasswordReason),
+    PAMQuestion(ConversationQuestion),
+    Retry,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub enum ConversationQuestion {
+    Info(String),
+    SensitiveInput(String),
+    Input(String),
+    Error(String),
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub enum FallbackToPasswordReason {
+    FingerprintDeviceUnavailable,
+    FingerprintUserUnavailable,
+    NoEnrolledFingerprints,
+    PamUnavailable,
+}
