@@ -1,24 +1,33 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::mem::MaybeUninit;
+use std::process::{ChildStdin, ChildStdout};
+use std::sync::mpsc::{self, TryRecvError};
+use std::time::Duration;
 
+use anyhow::Context;
 use ctap_types::ctap2::AuthenticatorDataFlags;
 use ctap_types::ctap2::get_assertion::{AuthenticatorData, Request, Response, ResponseBuilder};
 use ctap_types::serde::cbor_deserialize;
 use ctap_types::{Bytes, webauthn::PublicKeyCredentialRpEntity};
-use ctaphid_types::Channel;
-use log::{error, info};
-use pam::Client;
-use serde::Deserialize;
+use ctaphid_types::{Channel, DeviceError};
+use log::{debug, error, info};
 use sha2::Digest;
 
-use passkeyd_abi::config::Config;
+use passkeyd_abi::config::{Auth, Config};
 use passkeyd_abi::database::{get_passkeys, layout::Passkey};
-use passkeyd_abi::utils::{PresenceUI, SelectUI, UI, spawn_ui};
+use passkeyd_abi::utils::{
+    CborVec, FallbackToPasswordReason, PresenceUI, SelectUI, ServiceMessage, SystemdChild, UI,
+    UIMessage, spawn_ui,
+};
+use zbus::blocking::Connection;
 
+use crate::auth::fprintd::{FprintDeviceProxyBlocking, FprintManagerProxyBlocking};
+use crate::auth::pam::InteractiveConversation;
+use crate::auth::pass::verify_password;
 use crate::cryptography;
-use crate::ctaphid::CtapStatus;
 use crate::ctaphid::ctaphid::Ctaphid;
-use crate::utils::{cancellable_ui, has_another_fido_device};
+use crate::ctaphid::{CtapStatus, TransportError};
+use crate::utils::{Readiness, cancellable_ui, has_another_fido_device};
 
 pub fn get(
     hid: &mut Ctaphid,
@@ -28,13 +37,8 @@ pub fn get(
 ) -> anyhow::Result<Response> {
     let (rp_entity, mut passkeys) = load_passkeys(&req)?;
     let action = authorization_action(has_another_fido_device(), config.no_pass, passkeys.len());
-    let ui_response = authorize(hid, channel, config, &rp_entity, &passkeys, action)?;
-
-    if !config.no_pass {
-        authenticate_password(config, &ui_response.passphrase)?;
-    }
-
-    let authorized_passkey = passkeys.swap_remove(ui_response.index);
+    let authorized_index = authorize(hid, channel, config, &rp_entity, &passkeys, action)?;
+    let authorized_passkey = passkeys.swap_remove(authorized_index);
 
     let rp_id_hash = sha2::Sha256::digest(req.rp_id.as_bytes()).into();
 
@@ -71,7 +75,7 @@ pub fn get(
     //         && is_rk == true
     //     {
     //         response.user = Some(authorized_passkey.credential_source.other_ui.user);
-    //     }
+    //      }
     // }
 
     response.user = Some(authorized_passkey.credential_source.other_ui.user.clone());
@@ -134,12 +138,12 @@ fn authorization_action(
     match (has_another_fido_dev, no_pass, passkey_count) {
         // no other key, no password
         // and no credentials either
-        // send the cerds directly
+        // send the no cerds directly
         (false, true, 0) => AuthorizationAction::NoCredentials,
 
         // no other key, no password
         // and but one credential
-        // send the cerds directly
+        // skip ui, send the cerds directly
         (false, true, 1) => AuthorizationAction::UseOnlyPasskey,
 
         // another key, no password,
@@ -162,7 +166,7 @@ fn authorize(
     rp_entity: &PublicKeyCredentialRpEntity,
     passkeys: &[Passkey],
     action: AuthorizationAction,
-) -> anyhow::Result<SelectionResponse> {
+) -> anyhow::Result<usize> {
     match action {
         AuthorizationAction::NoCredentials => {
             anyhow::bail!(CtapStatus::NoCredentials);
@@ -170,11 +174,7 @@ fn authorize(
 
         AuthorizationAction::UseOnlyPasskey => {
             info!("Using the only available passkey without spawning UI.");
-
-            Ok(SelectionResponse {
-                index: 0,
-                passphrase: String::new(),
-            })
+            Ok(0)
         }
 
         AuthorizationAction::Presence => authorize_presence(hid, channel, config, passkeys),
@@ -190,24 +190,16 @@ fn authorize_presence(
     channel: Channel,
     config: &Config,
     passkeys: &[Passkey],
-) -> anyhow::Result<SelectionResponse> {
-    let approved = cancellable_ui(
-        hid,
-        channel,
-        spawn_ui(
-            config,
-            UI::KeySelection,
-            PresenceUI {
-                title: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.title"),
-                description: &passkeyd_locale::translate!(
-                    "passkeyd.cerds.make.presence_ui.description"
-                ),
-                button: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.button"),
-            },
-        ),
-    )?
-    .exit_status
-    .success();
+) -> anyhow::Result<usize> {
+    let ui_data = PresenceUI {
+        title: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.title"),
+        description: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.description"),
+        button: &passkeyd_locale::translate!("passkeyd.cerds.make.presence_ui.button"),
+    };
+
+    let approved = cancellable_ui(hid, channel, spawn_ui(config, UI::KeySelection, ui_data))?
+        .exit_status
+        .success();
 
     if !approved {
         anyhow::bail!(CtapStatus::OperationDenied);
@@ -217,10 +209,7 @@ fn authorize_presence(
         anyhow::bail!(CtapStatus::NoCredentials);
     }
 
-    Ok(SelectionResponse {
-        index: 0,
-        passphrase: String::new(),
-    })
+    Ok(0)
 }
 
 fn authorize_selection(
@@ -229,7 +218,7 @@ fn authorize_selection(
     config: &Config,
     rp_entity: &PublicKeyCredentialRpEntity,
     passkeys: &[Passkey],
-) -> anyhow::Result<SelectionResponse> {
+) -> anyhow::Result<usize> {
     let ui_state = SelectUI {
         rp: rp_entity,
         other_uis: passkeys
@@ -239,59 +228,383 @@ fn authorize_selection(
         no_pass: config.no_pass,
     };
 
-    let mut ui_response = cancellable_ui(hid, channel, spawn_ui(config, UI::KeySelect, ui_state))?;
-
-    if !ui_response.exit_status.success() {
-        info!("The request was denied");
-        anyhow::bail!(CtapStatus::KeepaliveCancel);
-    }
-
-    let mut bytes = Vec::new();
-    ui_response.stdout.read_to_end(&mut bytes)?;
-
-    let start = bytes
-        .iter()
-        .position(|b| *b == 0x02)
-        .expect("missing STX marker in UI output");
-
-    Ok(cbor_deserialize(&bytes[start + 1..]).unwrap())
+    authenticate_handler(hid, channel, config, ui_state)
 }
 
-fn authenticate_password(config: &Config, passphrase: &str) -> anyhow::Result<()> {
-    let Some(login_user) = get_username_from_uid(config.gui_uid) else {
-        error!("Failed to find username.");
-        anyhow::bail!(CtapStatus::OperationDenied)
+#[derive(Debug)]
+enum AuthorizationOutcome {
+    Authorized,
+    UnAuthorized,
+    FallbackToPassword(FallbackToPasswordReason),
+}
+
+fn authenticate_handler(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    config: &Config,
+    ui_state: SelectUI,
+) -> anyhow::Result<usize> {
+    let mut child = spawn_ui(config, UI::KeySelect, ui_state);
+    let mut stdin = child.inner.stdin.take().unwrap();
+    let mut stdout = child.inner.stdout.take().unwrap();
+    let mut event_buf = Vec::new();
+
+    loop {
+        if let Some(event) = try_ui_message(hid, channel, &mut child, &mut stdout, &mut event_buf)?
+        {
+            match event {
+                UIMessage::SelectionDoneMaybeStartAuth(i) => {
+                    if !config.no_pass {
+                        authorization(
+                            hid,
+                            channel,
+                            config,
+                            &mut child,
+                            &mut stdin,
+                            &mut stdout,
+                            &mut event_buf,
+                        )?;
+                    }
+                    return Ok(i);
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+}
+
+/// Returns Ok() for successfull authorization
+fn authorization(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    config: &Config,
+    child: &mut SystemdChild,
+    stdin: &mut ChildStdin,
+    stdout: &mut ChildStdout,
+    event_buf: &mut Vec<u8>,
+) -> anyhow::Result<()> {
+    let mut auth = &config.auth;
+    loop {
+        let auth_outcome = match auth {
+            Auth::PASS => authorization_pass(hid, channel, config, child, stdin, stdout, event_buf),
+            Auth::FPRINT => {
+                authorization_fprint(hid, channel, config, child, stdin, stdout, event_buf)
+            }
+            Auth::PAM => authorization_pam(hid, channel, config, child, stdin, stdout, event_buf),
+        };
+
+        match auth_outcome? {
+            AuthorizationOutcome::Authorized => {
+                return Ok(());
+            }
+            AuthorizationOutcome::UnAuthorized => {
+                anyhow::bail!(CtapStatus::UvBlocked);
+            }
+            AuthorizationOutcome::FallbackToPassword(reason) => {
+                auth = &Auth::PASS;
+                send_command(stdin, ServiceMessage::FallbackToPassword(reason))?;
+            }
+        }
+    }
+}
+
+fn send_command(stdin: &mut ChildStdin, command: ServiceMessage) -> anyhow::Result<()> {
+    stdin
+        .write_all(CborVec::from_serializable(command, size_of::<ServiceMessage>()).as_ref())
+        .map_err(anyhow::Error::from)
+}
+
+/*
+* Technically, I can check this initially before setting the config and fallback before ever reaching fprint, but the hardware could’ve just failed since the app session is gonna be long.
+* idk, it just doesn’t feel right to check those initially when it could’ve clearly changed later over a long duration.
+*/
+
+fn authorization_fprint(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    config: &Config,
+    child: &mut SystemdChild,
+    stdin: &mut ChildStdin,
+    _stdout: &mut ChildStdout,
+    _event_buf: &mut Vec<u8>,
+) -> anyhow::Result<AuthorizationOutcome> {
+    let Ok(connection) = Connection::session() else {
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
+    };
+    let Ok(fprint_manager) = FprintManagerProxyBlocking::new(&connection) else {
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
     };
 
-    let mut client = Client::with_password("system-auth").expect("Failed to init PAM client!");
+    let Ok(device_path) = fprint_manager.get_default_device() else {
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
+    };
 
-    client
-        .conversation_mut()
-        .set_credentials(login_user, passphrase);
+    let Ok(fprint_device) = FprintDeviceProxyBlocking::new(&connection, device_path) else {
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
+    };
 
-    // forget to put this inside of config, will do in future refactor.
-    //
-    // Entering the wrong password more than the configured 'deny' attempts will lock your account. Even with the correct password, it will still report as invalid.
-    // To unlock the account, use the command: `faillock --user <username> --reset`, or wait for the configured lock time in PAM, which is usually around 600 seconds (10 minutes).
-    if client.authenticate().is_err() {
-        // If the retry count exceeds three, the client must
-        // assume the password is valid and return it,
-        // so the daemon can verify the password. If the password is wrong,
-        // it is clear that the retry limit has been exceeded.
-        // The client is considered untrusted, and the daemon,
-        // being the trusted entity, must validate
-        // anything sensitive carefully.
+    let username = get_username_from_uid(config.gui_uid).ok_or(CtapStatus::OperationDenied)?;
+    let Ok(enrolled) = fprint_device.list_enrolled_fingers(&username) else {
+        info!("[Fingureprint] No enrolled key found");
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
+    };
 
-        anyhow::bail!(CtapStatus::UvBlocked);
+    if enrolled.is_empty() {
+        info!("[Fingureprint] No enrolled key found");
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
     }
 
-    Ok(())
+    debug!("[Fingureprint] Claming device...");
+    if fprint_device.claim(&username).is_err() {
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
+    };
+
+    fprint_device.verify_start("")?;
+
+    let mut status_stream = fprint_device.receive_verify_status()?;
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        while let Some(signal) = status_stream.next() {
+            if let Ok(args) = signal.args() {
+                if tx.send(args.result).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    const MAX_ATTEMPTS: usize = 3;
+    let mut attempts = 0;
+
+    loop {
+        if let Ok(status) = rx.try_recv() {
+            match status.as_str() {
+                "verify-match" => {
+                    let _ = fprint_device.verify_stop();
+                    let _ = fprint_device.release();
+                    debug!("[Fingureprint] Releasing device...");
+                    return Ok(AuthorizationOutcome::Authorized);
+                }
+                "verify-no-match" => {
+                    attempts = attempts + 1;
+
+                    if attempts >= MAX_ATTEMPTS {
+                        let _ = fprint_device.verify_stop();
+                        let _ = fprint_device.release();
+                        debug!("[Fingureprint] Releasing device...");
+                        return Ok(AuthorizationOutcome::UnAuthorized);
+                    }
+
+                    send_command(stdin, ServiceMessage::Retry)?;
+                }
+                "verify-unknown-error" => {
+                    let _ = fprint_device.verify_stop();
+                    let _ = fprint_device.release();
+                    debug!("[Fingureprint] Releasing device...");
+                    return Ok(AuthorizationOutcome::FallbackToPassword(
+                        FallbackToPasswordReason::FingerprintDeviceUnavailable,
+                    ));
+                }
+                _ => send_command(stdin, ServiceMessage::Retry)?,
+            };
+        };
+
+        if child
+            .inner
+            .try_wait()
+            .context("failed to poll UI process")?
+            .is_some()
+        {
+            let _ = fprint_device.verify_stop();
+            let _ = fprint_device.release();
+            anyhow::bail!(CtapStatus::OperationDenied);
+        }
+
+        if try_recv_cancel(hid, channel)?.is_some() {
+            let _ = fprint_device.verify_stop();
+            let _ = fprint_device.release();
+            let _ = child.kill();
+            let _ = child.inner.wait();
+            anyhow::bail!(CtapStatus::KeepaliveCancel);
+        };
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 }
 
-#[derive(Deserialize)]
-pub struct SelectionResponse {
-    pub index: usize,
-    pub passphrase: String,
+fn authorization_pam(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    _config: &Config,
+    child: &mut SystemdChild,
+    stdin: &mut ChildStdin,
+    stdout: &mut ChildStdout,
+    event_buf: &mut Vec<u8>,
+) -> anyhow::Result<AuthorizationOutcome> {
+    // let username = get_username_from_uid(config.gui_uid).ok_or(CtapStatus::OperationDenied)?;
+
+    let (question_tx, question_rx) = mpsc::channel();
+    let (answer_tx, answer_rx) = mpsc::channel();
+    let (pam_result_tx, pam_result_rx) = mpsc::channel();
+
+    let conv = InteractiveConversation {
+        answer_rx: answer_rx,
+        question_tx: question_tx,
+    };
+
+    let Ok(mut client) = pam::Client::with_conversation("passkeyd", conv) else {
+        return Ok(AuthorizationOutcome::FallbackToPassword(
+            FallbackToPasswordReason::FingerprintDeviceUnavailable,
+        ));
+    };
+
+    std::thread::spawn(move || {
+        let _ = pam_result_tx.send(client.authenticate());
+    });
+
+    loop {
+        if let Ok(question) = question_rx.try_recv() {
+            send_command(stdin, ServiceMessage::PAMQuestion(question))?;
+        }
+
+        if let Some(UIMessage::Password(ans)) =
+            try_ui_message(hid, channel, child, stdout, event_buf)?
+        {
+            answer_tx
+                .send(ans)
+                .map_err(|_| anyhow::anyhow!("Unexpectedly, PAM authentication thread died"))?;
+        }
+
+        match pam_result_rx.try_recv() {
+            Ok(Ok(())) => return Ok(AuthorizationOutcome::Authorized),
+            Ok(Err(_pam_err)) => return Ok(AuthorizationOutcome::UnAuthorized),
+
+            Err(TryRecvError::Disconnected) => {
+                return Err(anyhow::anyhow!(
+                    "Unexpectedly, PAM authentication thread died"
+                ));
+            }
+            Err(TryRecvError::Empty) => (),
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+fn authorization_pass(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    config: &Config,
+    child: &mut SystemdChild,
+    stdin: &mut ChildStdin,
+    stdout: &mut ChildStdout,
+    event_buf: &mut Vec<u8>,
+) -> anyhow::Result<AuthorizationOutcome> {
+    let username = get_username_from_uid(config.gui_uid).ok_or(CtapStatus::OperationDenied)?;
+    const MAX_ATTEMPTS: usize = 3;
+    let mut attempts = 0;
+
+    loop {
+        if let Some(UIMessage::Password(pass)) =
+            try_ui_message(hid, channel, child, stdout, event_buf)?
+        {
+            if verify_password(&username, &pass)? {
+                return Ok(AuthorizationOutcome::Authorized);
+            }
+            attempts += 1;
+            if attempts >= MAX_ATTEMPTS {
+                return Ok(AuthorizationOutcome::UnAuthorized);
+            }
+            send_command(stdin, ServiceMessage::Retry)?;
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// If `Some(())` is retuned, cancel request is received
+/// None is returned, no cancel request
+fn try_recv_cancel(hid: &mut Ctaphid, channel: Channel) -> anyhow::Result<Option<()>> {
+    if !hid.hid.is_readable() {
+        return Ok(None);
+    }
+    // get_webauthn is responsible for readable states
+    // is_readble just read the status provided by get_webauthn
+    // so, get_webauth must be called
+    match hid.get_webauthn()? {
+        Some((incoming_channel, _)) => {
+            // Well, could handle this too by passing it to the dispatcher.
+            // But I don't think it would be that useful. I mean, why the hell are you even invoking
+            // auth twice(you need to invoke in one tab and then switch to another tab to invoke another)?
+            // If you're exercising free will, that's a different case.
+            // otherwise, GET YOUR SELF A BRAIN CHECK
+
+            error!("sent busy to channel {incoming_channel:?} caz currently processing {channel}");
+
+            anyhow::bail!(TransportError {
+                channel: incoming_channel,
+                err: DeviceError::ChannelBusy
+            });
+        }
+        None if hid.is_cancelled(channel) => Ok(Some(())),
+        _ => Ok(None),
+    }
+}
+
+fn try_ui_message(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    child: &mut SystemdChild,
+    stdout: &mut ChildStdout,
+    event_buf: &mut Vec<u8>,
+) -> anyhow::Result<Option<UIMessage>> {
+    if try_recv_cancel(hid, channel)?.is_some() {
+        let _ = child.kill();
+        let _ = child.inner.wait();
+        anyhow::bail!(CtapStatus::KeepaliveCancel);
+    };
+
+    if let Some(_) = child
+        .inner
+        .try_wait()
+        .context("failed to poll UI process")?
+    {
+        anyhow::bail!(CtapStatus::OperationDenied);
+    }
+
+    if stdout.is_readable() {
+        let mut temp_buff = [0; 512];
+        loop {
+            match cbor_deserialize(event_buf.as_slice()) {
+                Ok(res) => return Ok(res),
+                Err(_) => {
+                    // If it failed probably because don't got enough bytes read more from stdout.
+                    let n = stdout.read(&mut temp_buff)?;
+                    if n == 0 {
+                        anyhow::bail!("Child stdout closed unexpectedly");
+                    }
+                    event_buf.extend_from_slice(&temp_buff[..n]);
+                }
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn get_username_from_uid(uid: libc::uid_t) -> Option<String> {

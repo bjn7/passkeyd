@@ -1,4 +1,7 @@
-use std::process::{ChildStdout, ExitStatus};
+use std::{
+    os::fd::AsRawFd,
+    process::{ChildStdout, ExitStatus},
+};
 
 use anyhow::Context;
 use ctaphid_types::{Channel, DeviceError};
@@ -6,6 +9,22 @@ use log::{error, info};
 use passkeyd_abi::utils::SystemdChild;
 
 use crate::ctaphid::{CtapStatus, TransportError, ctaphid::Ctaphid};
+
+pub trait Readiness {
+    fn is_readable(&self) -> bool;
+}
+
+impl<T: AsRawFd> Readiness for T {
+    fn is_readable(&self) -> bool {
+        let mut poolfd = libc::pollfd {
+            fd: self.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ret = unsafe { libc::poll(&mut poolfd, 1, 0) };
+        ret > 0 && (poolfd.revents & libc::POLLIN != 0)
+    }
+}
 
 unsafe extern "C" {
     fn hid_init() -> i32;
@@ -83,6 +102,7 @@ pub fn has_another_fido_device() -> bool {
 // 	If HID has no read events, go back to polling for UI exit
 */
 
+#[allow(unused)]
 pub struct UIResponse {
     pub exit_status: ExitStatus,
     pub stdout: ChildStdout,
@@ -106,10 +126,6 @@ pub fn cancellable_ui(
                     // If you're exercising free will, that's a different case.
                     // otherwise, GET YOUR SELF A BRAIN CHECK
 
-                    let _ = child.kill();
-                    let _ = child.inner.wait();
-                    info!("Killed User Interface");
-
                     error!(
                         "sent busy to channel {incoming_channel:?} caz currently processing {channel}"
                     );
@@ -123,7 +139,6 @@ pub fn cancellable_ui(
                     let _ = child.kill();
                     let _ = child.inner.wait();
                     info!("Killed User Interface");
-                    // hid.send_cbor_status(channel, CtapStatus::KeepaliveCancel)?;
                     anyhow::bail!(CtapStatus::KeepaliveCancel);
                 }
                 _ => (),

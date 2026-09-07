@@ -1,6 +1,7 @@
 use log::{debug, error};
 use passkeyd_abi::config;
 
+mod auth;
 mod cerds;
 mod cryptography;
 mod ctaphid;

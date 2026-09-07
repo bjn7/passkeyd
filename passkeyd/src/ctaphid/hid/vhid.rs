@@ -616,14 +616,10 @@ impl UHIDDevice<File> {
         handle.write_all(&event)?;
         Ok(UHIDDevice { handle })
     }
+}
 
-    pub fn is_readable(&self) -> bool {
-        let mut poolfd = libc::pollfd {
-            fd: self.handle.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let ret = unsafe { libc::poll(&mut poolfd, 1, 0) };
-        ret > 0 && (poolfd.revents & libc::POLLIN != 0)
+impl AsRawFd for UHIDDevice<File> {
+    fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
+        self.handle.as_raw_fd()
     }
 }
