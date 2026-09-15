@@ -2,6 +2,7 @@ use log::{debug, error};
 use passkeyd_abi::config;
 
 mod auth;
+pub mod cable;
 mod cerds;
 mod cryptography;
 mod ctaphid;

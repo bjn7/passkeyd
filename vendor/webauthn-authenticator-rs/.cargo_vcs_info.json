@@ -1,0 +1,7 @@
+{
+  "git": {
+    "sha1": "8a80623acc8826360c90c69023a258ec4c64adcc",
+    "dirty": true
+  },
+  "path_in_vcs": "webauthn-authenticator-rs"
+}

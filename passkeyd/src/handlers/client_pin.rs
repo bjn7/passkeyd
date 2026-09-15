@@ -24,6 +24,7 @@ pub fn handle(
 
         PinV1Subcommand::GetUVRetries => {
             res.uv_retries = Some(3);
+            hid.send_cbor(channel, res)?;
         }
 
         PinV1Subcommand::GetKeyAgreement => {
@@ -41,6 +42,7 @@ pub fn handle(
                 x: x_bytes,
                 y: y_bytes,
             });
+            hid.send_cbor(channel, res)?;
         }
 
         PinV1Subcommand::ChangePin | PinV1Subcommand::SetPin => {
@@ -51,7 +53,24 @@ pub fn handle(
         }
         PinV1Subcommand::GetPinUvAuthTokenUsingPinWithPermissions => todo!(),
         PinV1Subcommand::GetPinUvAuthTokenUsingUvWithPermissions => todo!(),
-        _ => todo!(),
+        _ => {
+            hid.send_cbor_status(channel, CtapStatus::UnsupportedOption)?;
+        }
     }
-    todo!()
+    Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_pin_retries_response_structure() {
+        let mut res = client_pin::Response::default();
+        res.retries = Some(3);
+        res.power_cycle_state = Some(false);
+        assert_eq!(res.retries, Some(3));
+        assert_eq!(res.power_cycle_state, Some(false));
+    }
+}
+

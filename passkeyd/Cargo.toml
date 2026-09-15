@@ -28,6 +28,10 @@ passkeyd-abi = { path = "../passkeyd-abi" }
 passkeyd-locale = { path = "../passkeyd-locale" }
 rsa = { version = "0.9.10", features = ["serde"] }
 zbus = { version = "5.19.0", features = ["blocking"] }
+webauthn-authenticator-rs = { version = "0.6.1-dev", path = "../vendor/webauthn-authenticator-rs", features = ["cable", "crypto"] }
+tokio = { version = "1.47", features = ["full"] }
+qrcode = "0.12.0"
+
 
 [build-dependencies]
 cc = "1.4.4"

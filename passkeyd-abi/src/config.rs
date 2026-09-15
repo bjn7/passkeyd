@@ -27,13 +27,14 @@ pub struct Config {
     pub no_pass: bool,
     pub lang: Option<String>,
     pub auth: Auth,
+    pub allow_external_keys: bool,
 }
 
 const PASSKEY_CONFIG_PATH: &str = "/etc/passkeyd.conf";
 
 impl Config {
     pub fn initialize() -> anyhow::Result<Config> {
-        let content = fs::read_to_string(PASSKEY_CONFIG_PATH)?;
+        let content = fs::read_to_string(PASSKEY_CONFIG_PATH).unwrap();
         let config = content
             .lines()
             .filter(|line| !line.trim_start().is_empty() || !line.trim_start().starts_with("#"))
@@ -80,6 +81,10 @@ impl Config {
             .unwrap_or(true);
 
         let no_pass = config.get("NO_PASS").map(|x| x == "yes").unwrap_or(false);
+        let allow_external_keys = config
+            .get("ALLOW_EXTERNAL_KEYS")
+            .map(|x| x == "yes")
+            .unwrap_or(false);
 
         unsafe {
             std::env::set_var("RUST_LOG", &rust_log);
@@ -95,6 +100,7 @@ impl Config {
             front_selection,
             use_tpm_cryptography,
             auth: Auth::PASS,
+            allow_external_keys,
         })
     }
 }

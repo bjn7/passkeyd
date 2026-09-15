@@ -56,6 +56,15 @@ impl Ctaphid {
             .get(&channel.into())
             .copied()
             .unwrap_or(false)
+            || self.cancelled
+                .get(&Channel::BROADCAST.into())
+                .copied()
+                .unwrap_or(false)
+    }
+
+    pub fn clear_cancelled(&mut self, channel: Channel) {
+        self.cancelled.remove(&channel.into());
+        self.cancelled.remove(&Channel::BROADCAST.into());
     }
 
     pub fn get_webauthn(&mut self) -> ReturnEvent {

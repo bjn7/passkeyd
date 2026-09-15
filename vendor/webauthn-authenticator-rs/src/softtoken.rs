@@ -1,0 +1,1215 @@
+#[cfg(doc)]
+use crate::stubs::*;
+
+use crate::{
+    authenticator_hashed::AuthenticatorBackendHashedClientData, crypto::compute_sha256,
+    ctap2::commands::GetInfoResponse, error::WebauthnCError, BASE64_ENGINE,
+};
+use base64::Engine;
+use crypto_glue::{
+    der::SecretDocument,
+    ecdsa_p256::{
+        self, EcdsaP256PrivateKey, EcdsaP256PublicEncodedPoint, EcdsaP256Signature,
+        EcdsaP256SigningKey, EcdsaP256VerifyingKey,
+    },
+    ecdsa_p384::{EcdsaP384DerSignature, EcdsaP384SigningKey, EcdsaP384VerifyingKey},
+    pkcs8::PrivateKeyInfo,
+    rand::{self, RngCore},
+    traits::{EncodeDer, Pkcs8EncodePrivateKey, Signer, Zeroizing},
+    x509::{
+        pkeyb64, uuid_to_serial, x509b64, Builder, Certificate, CertificateBuilder, Name, Profile,
+        SubjectPublicKeyInfoOwned, Time, Validity,
+    },
+};
+use serde::{Deserialize, Serialize};
+use serde_cbor_2::value::Value;
+use std::collections::HashMap;
+use std::iter;
+use std::str::FromStr;
+use std::time::{Duration, SystemTime};
+use std::{collections::BTreeMap, fs::File, io::Read};
+use std::{
+    collections::BTreeSet,
+    io::{Seek, Write},
+};
+use uuid::Uuid;
+use webauthn_rs_proto::{
+    AllowCredentials, AuthenticationExtensionsClientOutputs, AuthenticatorAssertionResponseRaw,
+    AuthenticatorAttachment, AuthenticatorAttestationResponseRaw, AuthenticatorTransport,
+    PublicKeyCredential, PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions,
+    RegisterPublicKeyCredential, RegistrationExtensionsClientOutputs, UserVerificationPolicy,
+};
+
+pub const AAGUID: Uuid = uuid::uuid!("0fb9bcbc-a0d4-4042-bbb0-559bc1631e28");
+
+const CA_VALID_DAYS: u64 = 30;
+const CERT_VALID_DAYS: u64 = 5;
+
+#[derive(Serialize, Deserialize)]
+pub struct SoftToken {
+    #[serde(with = "x509b64")]
+    ca_cert: Certificate,
+    #[serde(with = "pkeyb64")]
+    intermediate_key: SecretDocument,
+    #[serde(with = "x509b64")]
+    intermediate_cert: Certificate,
+    tokens: HashMap<Vec<u8>, Zeroizing<Vec<u8>>>,
+    counter: u32,
+    falsify_uv: bool,
+}
+
+fn build_ca(unique_id: Uuid) -> Result<(EcdsaP384SigningKey, Certificate), WebauthnCError> {
+    let mut rng = rand::thread_rng();
+    let serial_number = uuid_to_serial(unique_id);
+
+    let now = SystemTime::now();
+    let not_before = Time::try_from(now).map_err(|err| {
+        error!(?err, "Unable to convert system time");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+    let not_after =
+        Time::try_from(now + Duration::from_secs(CA_VALID_DAYS * 86400)).map_err(|err| {
+            error!(?err, "Unable to convert system time");
+            WebauthnCError::CryptographyX509Builder
+        })?;
+
+    let validity = Validity {
+        not_before,
+        not_after,
+    };
+
+    let profile = Profile::Root;
+
+    let dn_str = format!(
+        "C=AU,ST=QLD,O=Webauthn Authenticator RS,CN=Dynamic Softtoken CA {}",
+        unique_id
+    );
+    let root_subject = Name::from_str(&dn_str).map_err(|err| {
+        error!(?err, "Invalid root subject DN - THIS IS A BUG.");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+
+    let signing_key = EcdsaP384SigningKey::random(&mut rng);
+    let verifying_key = EcdsaP384VerifyingKey::from(&signing_key);
+    let pub_key = SubjectPublicKeyInfoOwned::from_key(verifying_key).map_err(|err| {
+        error!(?err, "Unable to access subject public key information");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+
+    let builder = CertificateBuilder::new(
+        profile,
+        serial_number,
+        validity,
+        root_subject.clone(),
+        pub_key.clone(),
+        &signing_key,
+    )
+    .map_err(|err| {
+        error!(?err, "Unable to create certificate builder");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+
+    let cert = builder
+        .build_with_rng::<EcdsaP384DerSignature>(&mut rng)
+        .map_err(|err| {
+            error!(?err, "Unable to sign certificate request");
+            WebauthnCError::CryptographyX509Builder
+        })?;
+
+    Ok((signing_key, cert))
+}
+
+fn build_intermediate(
+    ca_key: &EcdsaP384SigningKey,
+    ca_cert: &Certificate,
+    unique_id: Uuid,
+) -> Result<(EcdsaP256SigningKey, Certificate), WebauthnCError> {
+    let mut rng = rand::thread_rng();
+
+    let root_serial_uuid = Uuid::new_v4();
+    let serial_number = uuid_to_serial(root_serial_uuid);
+
+    let now = SystemTime::now();
+    let not_before = Time::try_from(now).map_err(|err| {
+        error!(?err, "Unable to convert system time");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+    let not_after =
+        Time::try_from(now + Duration::from_secs(CERT_VALID_DAYS * 86400)).map_err(|err| {
+            error!(?err, "Unable to convert system time");
+            WebauthnCError::CryptographyX509Builder
+        })?;
+
+    let validity = Validity {
+        not_before,
+        not_after,
+    };
+
+    let profile = Profile::Leaf {
+        issuer: ca_cert.tbs_certificate.subject.clone(),
+        enable_key_agreement: true,
+        enable_key_encipherment: true,
+        include_subject_key_identifier: true,
+    };
+
+    // NOTE: OU=Authenticator Attestation is a requirement of "Packed" attestation.
+    let dn_str = format!(
+        "C=AU,ST=QLD,O=Webauthn Authenticator RS,CN=Token {},OU=Authenticator Attestation",
+        unique_id
+    );
+    let root_subject = Name::from_str(&dn_str).map_err(|err| {
+        error!(?err, "Invalid cert subject DN - THIS IS A BUG.");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+
+    let signing_key = EcdsaP256SigningKey::random(&mut rng);
+    let verifying_key = EcdsaP256VerifyingKey::from(&signing_key);
+    let pub_key = SubjectPublicKeyInfoOwned::from_key(verifying_key).map_err(|err| {
+        error!(?err, "Unable to access subject public key information");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+
+    let builder = CertificateBuilder::new(
+        profile,
+        serial_number,
+        validity,
+        root_subject.clone(),
+        pub_key.clone(),
+        ca_key,
+    )
+    .map_err(|err| {
+        error!(?err, "Unable to create certificate builder");
+        WebauthnCError::CryptographyX509Builder
+    })?;
+
+    let cert = builder
+        .build_with_rng::<EcdsaP384DerSignature>(&mut rng)
+        .map_err(|err| {
+            error!(?err, "Unable to sign certificate request");
+            WebauthnCError::CryptographyX509Builder
+        })?;
+
+    Ok((signing_key, cert))
+}
+
+impl SoftToken {
+    pub fn new(falsify_uv: bool) -> Result<(Self, Certificate), WebauthnCError> {
+        let ca_uuid = Uuid::new_v4();
+
+        let (ca_key, ca_cert) = build_ca(ca_uuid)?;
+
+        let ca = ca_cert.clone();
+
+        let (intermediate_key, intermediate_cert) = build_intermediate(&ca_key, &ca_cert, ca_uuid)?;
+
+        let intermediate_key = intermediate_key.to_pkcs8_der().map_err(|err| {
+            error!(?err, "Unable to encode private key as pkcs8");
+            WebauthnCError::CryptographyX509Builder
+        })?;
+
+        Ok((
+            SoftToken {
+                ca_cert,
+                intermediate_key,
+                intermediate_cert,
+                tokens: HashMap::new(),
+                counter: 0,
+                falsify_uv,
+            },
+            ca,
+        ))
+    }
+
+    pub fn get_info(&self) -> GetInfoResponse {
+        GetInfoResponse {
+            versions: BTreeSet::from(["FIDO_2_0".to_string()]),
+            aaguid: Some(AAGUID),
+            transports: Some(vec!["internal".to_string()]),
+            ..Default::default()
+        }
+    }
+
+    pub fn to_cbor(&self) -> Result<Vec<u8>, WebauthnCError> {
+        serde_cbor_2::ser::to_vec(self).map_err(|e| {
+            error!("SoftToken.to_cbor: {:?}", e);
+            WebauthnCError::Cbor
+        })
+    }
+
+    pub fn from_cbor(v: &[u8]) -> Result<Self, WebauthnCError> {
+        serde_cbor_2::from_slice(v).map_err(|e| {
+            error!("SoftToken::from_cbor: {:?}", e);
+            WebauthnCError::Cbor
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct U2FSignData {
+    key_handle: Vec<u8>,
+    counter: u32,
+    signature: Vec<u8>,
+    flags: u8,
+}
+
+impl AuthenticatorBackendHashedClientData for SoftToken {
+    fn perform_register(
+        &mut self,
+        client_data_json_hash: Vec<u8>,
+        options: PublicKeyCredentialCreationOptions,
+        _timeout_ms: u32,
+    ) -> Result<RegisterPublicKeyCredential, WebauthnCError> {
+        // Let credTypesAndPubKeyAlgs be a new list whose items are pairs of PublicKeyCredentialType and a COSEAlgorithmIdentifier.
+        // Done in rust types.
+
+        // For each current of options.pubKeyCredParams:
+        //     If current.type does not contain a PublicKeyCredentialType supported by this implementation, then continue.
+        //     Let alg be current.alg.
+        //     Append the pair of current.type and alg to credTypesAndPubKeyAlgs.
+        let cred_types_and_pub_key_algs: Vec<_> = options
+            .pub_key_cred_params
+            .iter()
+            .filter_map(|param| {
+                if param.type_ != "public-key" {
+                    None
+                } else {
+                    Some((param.type_.clone(), param.alg))
+                }
+            })
+            .collect();
+
+        trace!("Found -> {:x?}", cred_types_and_pub_key_algs);
+
+        // If credTypesAndPubKeyAlgs is empty and options.pubKeyCredParams is not empty, return a DOMException whose name is "NotSupportedError", and terminate this algorithm.
+        if cred_types_and_pub_key_algs.is_empty() {
+            return Err(WebauthnCError::NotSupported);
+        }
+
+        /*
+            // Let clientExtensions be a new map and let authenticatorExtensions be a new map.
+
+            // If the extensions member of options is present, then for each extensionId → clientExtensionInput of options.extensions:
+            //     If extensionId is not supported by this client platform or is not a registration extension, then continue.
+            //     Set clientExtensions[extensionId] to clientExtensionInput.
+            //     If extensionId is not an authenticator extension, then continue.
+            //     Let authenticatorExtensionInput be the (CBOR) result of running extensionId’s client extension processing algorithm on clientExtensionInput. If the algorithm returned an error, continue.
+            //     Set authenticatorExtensions[extensionId] to the base64url encoding of authenticatorExtensionInput.
+        */
+
+        // Not required.
+        // If the options.signal is present and its aborted flag is set to true, return a DOMException whose name is "AbortError" and terminate this algorithm.
+
+        // Let issuedRequests be a new ordered set.
+
+        // Let authenticators represent a value which at any given instant is a set of client platform-specific handles, where each item identifies an authenticator presently available on this client platform at that instant.
+
+        // Start lifetimeTimer.
+
+        // While lifetimeTimer has not expired, perform the following actions depending upon lifetimeTimer, and the state and response for each authenticator in authenticators:
+
+        //    If lifetimeTimer expires,
+        //        For each authenticator in issuedRequests invoke the authenticatorCancel operation on authenticator and remove authenticator from issuedRequests.
+
+        //    If the user exercises a user agent user-interface option to cancel the process,
+        //        For each authenticator in issuedRequests invoke the authenticatorCancel operation on authenticator and remove authenticator from issuedRequests. Return a DOMException whose name is "NotAllowedError".
+
+        //    If the options.signal is present and its aborted flag is set to true,
+        //        For each authenticator in issuedRequests invoke the authenticatorCancel operation on authenticator and remove authenticator from issuedRequests. Then return a DOMException whose name is "AbortError" and terminate this algorithm.
+
+        //    If an authenticator becomes available on this client device,
+        //         If options.authenticatorSelection is present:
+        //             If options.authenticatorSelection.authenticatorAttachment is present and its value is not equal to authenticator’s authenticator attachment modality, continue.
+        //             If options.authenticatorSelection.requireResidentKey is set to true and the authenticator is not capable of storing a client-side-resident public key credential source, continue.
+        //             If options.authenticatorSelection.userVerification is set to required and the authenticator is not capable of performing user verification, continue.
+        //          Let userVerification be the effective user verification requirement for credential creation, a Boolean value, as follows. If options.authenticatorSelection.userVerification
+        //              is set to required -> Let userVerification be true.
+        //              is set to preferred
+        //                  If the authenticator
+        //                      is capable of user verification -> Let userVerification be true.
+        //                      is not capable of user verification -> Let userVerification be false.
+        //              is set to discouraged -> Let userVerification be false.
+        //          Let userPresence be a Boolean value set to the inverse of userVerification.
+        //          Let excludeCredentialDescriptorList be a new list.
+        //          For each credential descriptor C in options.excludeCredentials:
+        //              If C.transports is not empty, and authenticator is connected over a transport not mentioned in C.transports, the client MAY continue.
+        //              Otherwise, Append C to excludeCredentialDescriptorList.
+        //          Invoke the authenticatorMakeCredential operation on authenticator with clientDataHash, options.rp, options.user, options.authenticatorSelection.requireResidentKey, userPresence, userVerification, credTypesAndPubKeyAlgs, excludeCredentialDescriptorList, and authenticatorExtensions as parameters.
+
+        //          Append authenticator to issuedRequests.
+
+        //    If an authenticator ceases to be available on this client device,
+        //         Remove authenticator from issuedRequests.
+
+        //    If any authenticator returns a status indicating that the user cancelled the operation,
+        //         Remove authenticator from issuedRequests.
+        //         For each remaining authenticator in issuedRequests invoke the authenticatorCancel operation on authenticator and remove it from issuedRequests.
+
+        //    If any authenticator returns an error status equivalent to "InvalidStateError",
+        //         Remove authenticator from issuedRequests.
+        //         For each remaining authenticator in issuedRequests invoke the authenticatorCancel operation on authenticator and remove it from issuedRequests.
+        //         Return a DOMException whose name is "InvalidStateError" and terminate this algorithm.
+
+        //    If any authenticator returns an error status not equivalent to "InvalidStateError",
+        //         Remove authenticator from issuedRequests.
+
+        //    If any authenticator indicates success,
+        //         Remove authenticator from issuedRequests.
+        //         Let credentialCreationData be a struct whose items are:
+        //         Let constructCredentialAlg be an algorithm that takes a global object global, and whose steps are:
+
+        //         Let attestationObject be a new ArrayBuffer, created using global’s %ArrayBuffer%, containing the bytes of credentialCreationData.attestationObjectResult’s value.
+
+        //         Let id be attestationObject.authData.attestedCredentialData.credentialId.
+        //         Let pubKeyCred be a new PublicKeyCredential object associated with global whose fields are:
+        //         For each remaining authenticator in issuedRequests invoke the authenticatorCancel operation on authenticator and remove it from issuedRequests.
+        //         Return constructCredentialAlg and terminate this algorithm.
+
+        // For our needs, we let the u2f auth library handle the above, but currently it can't accept
+        // verified devices for u2f with ctap1/2. We may need to change u2f/authenticator library in the future.
+        // As a result this really limits our usage to certain device classes. This is why we implement
+        // this section in a seperate function call.
+
+        let (platform_attached, resident_key, user_verification) =
+            match &options.authenticator_selection {
+                Some(auth_sel) => {
+                    let pa = auth_sel
+                        .authenticator_attachment
+                        .as_ref()
+                        .map(|v| v == &AuthenticatorAttachment::Platform)
+                        .unwrap_or(false);
+                    let uv = auth_sel.user_verification == UserVerificationPolicy::Required;
+                    (pa, auth_sel.require_resident_key, uv)
+                }
+                None => (false, false, false),
+            };
+
+        let rp_id_hash = compute_sha256(options.rp.id.as_bytes()).to_vec();
+
+        // =====
+
+        if user_verification && !self.falsify_uv {
+            error!("User Verification not supported by softtoken");
+            return Err(WebauthnCError::NotSupported);
+        }
+
+        if platform_attached {
+            error!("Platform Attachement not supported by softtoken");
+            return Err(WebauthnCError::NotSupported);
+        }
+
+        if resident_key {
+            error!("Resident Keys not supported by softtoken");
+            // These will be supported in future :)
+            return Err(WebauthnCError::NotSupported);
+        }
+
+        // Generate a random credential id
+        let mut key_handle: Vec<u8> = vec![0; 32];
+        let mut rng = rand::thread_rng();
+        rng.fill_bytes(&mut key_handle);
+
+        // Create a new key.
+        let eckey = ecdsa_p256::new_key();
+
+        // Extract the public x and y coords.
+        let ecpublic = eckey.public_key();
+
+        let encoded_point = EcdsaP256PublicEncodedPoint::from(ecpublic);
+
+        let public_key_x = encoded_point
+            .x()
+            .map(|bytes| bytes.to_vec())
+            .unwrap_or_default();
+
+        let public_key_y = encoded_point
+            .y()
+            .map(|bytes| bytes.to_vec())
+            .unwrap_or_default();
+
+        // Extract the DER cert for later
+        let ecpriv_der = eckey
+            .to_sec1_der()
+            .map_err(|_| WebauthnCError::CryptographyEcdsaSec1Invalid)?;
+
+        // =====
+
+        // From the u2f response, we now need to assemble the attestation object now.
+
+        // cbor encode the public key. We already decomposed this, so just create
+        // the correct bytes.
+        let mut map = BTreeMap::new();
+        // KeyType -> EC2
+        map.insert(Value::Integer(1), Value::Integer(2));
+        // Alg -> ES256
+        map.insert(Value::Integer(3), Value::Integer(-7));
+
+        // Curve -> P-256
+        map.insert(Value::Integer(-1), Value::Integer(1));
+        // EC X coord
+        map.insert(Value::Integer(-2), Value::Bytes(public_key_x));
+        // EC Y coord
+        map.insert(Value::Integer(-3), Value::Bytes(public_key_y));
+
+        let pk_cbor = Value::Map(map);
+        let pk_cbor_bytes = serde_cbor_2::to_vec(&pk_cbor).map_err(|e| {
+            error!("PK CBOR -> {:x?}", e);
+            WebauthnCError::Cbor
+        })?;
+
+        let key_handle_len: u16 = u16::try_from(key_handle.len()).map_err(|e| {
+            error!("CBOR kh len is not u16 -> {:x?}", e);
+            WebauthnCError::Cbor
+        })?;
+
+        // combine aaGuid, KeyHandle, CborPubKey into a AttestedCredentialData. (acd)
+        let khlen_be_bytes = key_handle_len.to_be_bytes();
+        let acd_iter = AAGUID
+            .as_bytes()
+            .iter()
+            .chain(khlen_be_bytes.iter())
+            .copied()
+            .chain(key_handle.iter().copied())
+            .chain(pk_cbor_bytes.iter().copied());
+
+        // set counter to 0 during create
+        // Combine rp_id_hash, flags, counter, acd, into authenticator data.
+        // The flags are always att present, user verified, user present
+        let flags = if user_verification {
+            0b01000101
+        } else {
+            0b01000001
+        };
+
+        let authdata: Vec<u8> = rp_id_hash
+            .iter()
+            .copied()
+            .chain(iter::once(flags))
+            .chain(
+                // A 0 u32 counter
+                iter::repeat(0).take(4),
+            )
+            .chain(acd_iter)
+            .collect();
+
+        // 4.b. Verify that sig is a valid signature over the concatenation of authenticatorData and clientDataHash using the credential public key with alg.
+
+        let verification_data: Vec<u8> = authdata
+            .iter()
+            .chain(client_data_json_hash.iter())
+            .copied()
+            .collect();
+
+        // Now setup to sign.
+        // NOTE: for the token version we use the intermediate!
+        let private_key_info =
+            PrivateKeyInfo::try_from(self.intermediate_key.as_bytes()).map_err(|err| {
+                error!(?err, "Unable to decode private key pkcs8");
+                WebauthnCError::CryptographyPkcs8
+            })?;
+
+        let signing_key = EcdsaP256SigningKey::try_from(private_key_info).map_err(|err| {
+            error!(?err, "Unable to convert pkcs8 private key to ecdsa p256");
+            WebauthnCError::CryptographyPkcs8
+        })?;
+
+        let signature = signing_key
+            .try_sign(verification_data.as_slice())
+            .map(|signature: EcdsaP256Signature| signature.to_der().as_bytes().to_vec())
+            .map_err(|err| {
+                error!(?err, "Unable to sign verification data");
+                WebauthnCError::CryptographyEcdsaSignature
+            })?;
+
+        // Build the cbor attestation map.
+        let mut attest_map = BTreeMap::new();
+
+        attest_map.insert(
+            Value::Text("fmt".to_string()),
+            Value::Text("packed".to_string()),
+        );
+        let mut att_stmt_map = BTreeMap::new();
+        att_stmt_map.insert(Value::Text("alg".to_string()), Value::Integer(-7));
+
+        let x509_bytes = Value::Bytes(self.intermediate_cert.to_der().map_err(|err| {
+            error!(?err, "Unable to convert certificate to DER");
+            WebauthnCError::Cbor
+        })?);
+
+        att_stmt_map.insert(
+            Value::Text("x5c".to_string()),
+            Value::Array(vec![x509_bytes]),
+        );
+        att_stmt_map.insert(Value::Text("sig".to_string()), Value::Bytes(signature));
+
+        attest_map.insert(Value::Text("attStmt".to_string()), Value::Map(att_stmt_map));
+        attest_map.insert(Value::Text("authData".to_string()), Value::Bytes(authdata));
+
+        let ao = Value::Map(attest_map);
+
+        let ao_bytes = serde_cbor_2::to_vec(&ao).map_err(|e| {
+            error!("AO CBOR -> {:x?}", e);
+            WebauthnCError::Cbor
+        })?;
+
+        // Return a DOMException whose name is "NotAllowedError". In order to prevent information leak that could identify the user without consent, this step MUST NOT be executed before lifetimeTimer has expired. See §14.5 Registration Ceremony Privacy for details.
+
+        // Okay, now persist the token. We shouldn't fail from here.
+        self.tokens.insert(key_handle.clone(), ecpriv_der);
+
+        let rego = RegisterPublicKeyCredential {
+            id: BASE64_ENGINE.encode(&key_handle),
+            raw_id: key_handle.into(),
+            response: AuthenticatorAttestationResponseRaw {
+                attestation_object: ao_bytes.into(),
+                client_data_json: Vec::new(),
+                transports: Some(vec![AuthenticatorTransport::Internal]),
+            },
+            type_: "public-key".to_string(),
+            extensions: RegistrationExtensionsClientOutputs::default(),
+        };
+
+        trace!("rego  -> {:x?}", rego);
+        Ok(rego)
+    }
+
+    fn perform_auth(
+        &mut self,
+        client_data_json_hash: Vec<u8>,
+        options: PublicKeyCredentialRequestOptions,
+        timeout_ms: u32,
+    ) -> Result<PublicKeyCredential, WebauthnCError> {
+        // Let clientExtensions be a new map and let authenticatorExtensions be a new map.
+
+        // If the extensions member of options is present, then for each extensionId → clientExtensionInput of options.extensions:
+        // ...
+
+        // This is where we deviate from the spec, since we aren't a browser.
+
+        let user_verification = options.user_verification == UserVerificationPolicy::Required;
+
+        let rp_id_hash = compute_sha256(options.rp_id.as_bytes()).to_vec();
+
+        let u2sd = self.perform_u2f_sign(
+            rp_id_hash.clone(),
+            client_data_json_hash,
+            timeout_ms.into(),
+            options.allow_credentials.as_slice(),
+            user_verification && self.falsify_uv,
+        )?;
+
+        trace!("u2sd -> {:x?}", u2sd);
+        // Transform the result to webauthn
+
+        // The flags are set from the device.
+
+        let authdata: Vec<u8> = rp_id_hash
+            .iter()
+            .copied()
+            .chain(iter::once(u2sd.flags))
+            .chain(
+                // A 0 u32 counter
+                u2sd.counter.to_be_bytes().iter().copied(),
+            )
+            .collect();
+
+        Ok(PublicKeyCredential {
+            id: BASE64_ENGINE.encode(&u2sd.key_handle),
+            raw_id: u2sd.key_handle.into(),
+            response: AuthenticatorAssertionResponseRaw {
+                authenticator_data: authdata.into(),
+                client_data_json: Vec::new(),
+                signature: u2sd.signature.into(),
+                user_handle: None,
+            },
+            type_: "public-key".to_string(),
+            extensions: AuthenticationExtensionsClientOutputs::default(),
+        })
+    }
+}
+
+pub trait U2FToken {
+    fn perform_u2f_sign(
+        &mut self,
+        // This is rp.id_hash
+        app_bytes: Vec<u8>,
+        // This is client_data_json_hash
+        chal_bytes: Vec<u8>,
+        // timeout from options
+        timeout_ms: u64,
+        // list of creds
+        allowed_credentials: &[AllowCredentials],
+        user_verification: bool,
+    ) -> Result<U2FSignData, WebauthnCError>;
+}
+
+impl U2FToken for SoftToken {
+    fn perform_u2f_sign(
+        &mut self,
+        // This is rp.id_hash
+        app_bytes: Vec<u8>,
+        // This is client_data_json_hash
+        chal_bytes: Vec<u8>,
+        // timeout from options
+        _timeout_ms: u64,
+        // list of creds
+        allowed_credentials: &[AllowCredentials],
+        user_verification: bool,
+    ) -> Result<U2FSignData, WebauthnCError> {
+        if user_verification && !self.falsify_uv {
+            error!("User Verification not supported by softtoken");
+            return Err(WebauthnCError::NotSupported);
+        }
+
+        let cred = allowed_credentials
+            .iter()
+            .filter_map(|ac| {
+                self.tokens
+                    .get(&ac.id)
+                    .map(|v| (ac.id.clone().into(), v.clone()))
+            })
+            .take(1)
+            .next();
+
+        let (key_handle, pkder) = if let Some((key_handle, pkder)) = cred {
+            (key_handle, pkder)
+        } else {
+            error!("Credential ID not found");
+            return Err(WebauthnCError::Internal);
+        };
+
+        debug!("Using -> {:?}", key_handle);
+
+        let eckey = EcdsaP256PrivateKey::from_sec1_der(pkder.as_slice())
+            .map_err(|_| WebauthnCError::CryptographyEcdsaSec1Invalid)?;
+
+        let signer = EcdsaP256SigningKey::from(&eckey);
+
+        // Increment the counter.
+        self.counter += 1;
+        let counter = self.counter;
+
+        let flags = if user_verification {
+            0b00000101
+        } else {
+            0b00000001
+        };
+
+        let verification_data: Vec<u8> = app_bytes
+            .iter()
+            .chain(iter::once(&flags))
+            .chain(counter.to_be_bytes().iter())
+            .chain(chal_bytes.iter())
+            .copied()
+            .collect();
+
+        trace!("Signing: {:?}", verification_data.as_slice());
+        let signature = signer
+            .try_sign(&verification_data)
+            .map(|sig: EcdsaP256Signature| sig.to_der().to_bytes().into())
+            .map_err(|_| WebauthnCError::CryptographyEcdsaSignature)?;
+
+        Ok(U2FSignData {
+            key_handle,
+            counter,
+            signature,
+            flags,
+        })
+    }
+}
+
+/// [SoftToken] which is read form, and automatically saved to a [File] when
+/// dropped.
+///
+/// ## Warning
+///
+/// **[SoftTokenFile] is intended for testing purposes only, and is not intended
+/// for production or long-term usage.**
+///
+/// [SoftTokenFile] stores private key material insecurely with no protection
+/// of any kind. Its serialisation format is subject to change in the future
+/// *without warning*, which may prevent loading or saving [SoftTokenFile]s
+/// created with other versions of this code.
+pub struct SoftTokenFile {
+    token: SoftToken,
+    file: File,
+}
+
+impl SoftTokenFile {
+    /// Creates a new [SoftTokenFile] which will be saved when dropped.
+    pub fn new(token: SoftToken, file: File) -> Self {
+        Self { token, file }
+    }
+
+    /// Reads a [SoftToken] from a [File].
+    pub fn open(mut file: File) -> Result<Self, WebauthnCError> {
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+
+        let token: SoftToken = serde_cbor_2::from_slice(&buf).map_err(|e| {
+            error!("Error reading SoftToken: {:?}", e);
+            WebauthnCError::Cbor
+        })?;
+
+        Ok(Self { token, file })
+    }
+
+    /// Saves the [SoftToken] to a [File].
+    fn save(&mut self) -> Result<(), WebauthnCError> {
+        trace!("Saving SoftToken to {:?}", self.file);
+        let d = self.token.to_cbor()?;
+        self.file.set_len(0)?;
+        self.file.rewind()?;
+        self.file.write_all(&d)?;
+        self.file.flush()?;
+        Ok(())
+    }
+}
+
+/// Extracts the [File] handle from this [SoftTokenFile], dropping (and saving)
+/// the [SoftTokenFile] in the process.
+impl TryFrom<SoftTokenFile> for File {
+    type Error = WebauthnCError;
+    fn try_from(value: SoftTokenFile) -> Result<Self, Self::Error> {
+        Ok(value.file.try_clone()?)
+    }
+}
+
+impl AsRef<SoftToken> for SoftTokenFile {
+    fn as_ref(&self) -> &SoftToken {
+        &self.token
+    }
+}
+
+/// Drops the [SoftTokenFile], automatically saving it to disk.
+impl Drop for SoftTokenFile {
+    fn drop(&mut self) {
+        self.save().unwrap_or_else(|e| {
+            error!("Error saving SoftToken: {:?}", e);
+        });
+    }
+}
+
+impl AuthenticatorBackendHashedClientData for SoftTokenFile {
+    fn perform_register(
+        &mut self,
+        client_data_hash: Vec<u8>,
+        options: PublicKeyCredentialCreationOptions,
+        timeout_ms: u32,
+    ) -> Result<RegisterPublicKeyCredential, WebauthnCError> {
+        self.token
+            .perform_register(client_data_hash, options, timeout_ms)
+    }
+
+    fn perform_auth(
+        &mut self,
+        client_data_hash: Vec<u8>,
+        options: PublicKeyCredentialRequestOptions,
+        timeout_ms: u32,
+    ) -> Result<PublicKeyCredential, WebauthnCError> {
+        self.token
+            .perform_auth(client_data_hash, options, timeout_ms)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::{
+        ctap2::{
+            commands::{
+                value_to_vec_u8, GetAssertionRequest, GetAssertionResponse, MakeCredentialRequest,
+                MakeCredentialResponse,
+            },
+            CBORResponse,
+        },
+        perform_auth_with_request, perform_register_with_request,
+        prelude::{Url, WebauthnAuthenticator},
+        softtoken::SoftToken,
+    };
+    use crypto_glue::{traits::DecodeDer, x509::x509_verify_signature};
+    use std::time::Duration;
+    use tempfile::tempfile;
+    use webauthn_rs_core::{
+        proto::{AttestationCaList, AttestationCaListBuilder, COSEKey},
+        WebauthnCore as Webauthn,
+    };
+    use webauthn_rs_proto::{
+        AllowCredentials, AttestationConveyancePreference, PubKeyCredParams, RelyingParty, User,
+        UserVerificationPolicy,
+    };
+
+    const AUTHENTICATOR_TIMEOUT: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn webauthn_authenticator_wan_softtoken_direct_attest() {
+        let _ = tracing_subscriber::fmt::try_init();
+        let wan = Webauthn::new_unsafe_experts_only(
+            "Example RP",
+            "example.com",
+            vec![
+                url::Url::parse("https://example.com").unwrap(),
+                url::Url::parse("https://other.example.com").unwrap(),
+            ],
+            AUTHENTICATOR_TIMEOUT,
+            None,
+            None,
+        );
+
+        let (soft_token, ca_root) = SoftToken::new(true).unwrap();
+
+        let mut wa = soft_token;
+
+        let unique_id = [
+            158, 170, 228, 89, 68, 28, 73, 194, 134, 19, 227, 153, 107, 220, 150, 238,
+        ];
+        let name = "william";
+
+        let builder = wan
+            .new_challenge_register_builder(&unique_id, name, name)
+            .unwrap()
+            .attestation(AttestationConveyancePreference::Direct)
+            .user_verification_policy(UserVerificationPolicy::Preferred);
+
+        let (chal, reg_state) = wan.generate_challenge_register(builder).unwrap();
+
+        info!("🍿 challenge -> {:x?}", chal);
+
+        let r = wa
+            .do_registration(Url::parse("https://example.com/auth").unwrap(), chal)
+            .map_err(|e| {
+                error!("Error -> {:x?}", e);
+                e
+            })
+            .expect("Failed to register");
+
+        let mut att_ca_builder = AttestationCaListBuilder::new();
+        att_ca_builder
+            .insert_device_x509(ca_root, AAGUID, "softtoken".to_string(), Default::default())
+            .expect("Failed to build att ca list");
+        let att_ca_list: AttestationCaList = att_ca_builder.build();
+
+        let cred = wan
+            .register_credential(&r, &reg_state, Some(&att_ca_list))
+            .unwrap();
+
+        info!("Credential -> {:?}", cred);
+
+        let (chal, auth_state) = wan
+            .new_challenge_authenticate_builder(vec![cred.clone()], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        let r = wa
+            .do_authentication(Url::parse("https://example.com/auth").unwrap(), chal)
+            .map_err(|e| {
+                error!("Error -> {:x?}", e);
+                e
+            })
+            .expect("Failed to auth");
+
+        let auth_res = wan
+            .authenticate_credential(&r, &auth_state)
+            .expect("webauth authentication denied");
+        info!("auth_res -> {:x?}", auth_res);
+
+        // Check subdomains
+        let (chal, auth_state) = wan
+            .new_challenge_authenticate_builder(vec![cred.clone()], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        // Client side should allow this
+        let r = wa
+            .do_authentication(Url::parse("https://auth.example.com").unwrap(), chal)
+            .map_err(|e| {
+                error!("Error -> {:x?}", e);
+                e
+            })
+            .expect("Failed to auth");
+
+        // But server side should reject it, because it doesn't allow subdomains.
+        assert!(matches!(
+            wan.authenticate_credential(&r, &auth_state),
+            Err(WebauthnError::InvalidRPOrigin)
+        ));
+        info!("auth_res -> {:x?}", auth_res);
+
+        // Different domains are not allowed by client
+        let (chal, _) = wan
+            .new_challenge_authenticate_builder(vec![cred.clone()], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        assert!(matches!(
+            wa.do_authentication(Url::parse("https://auth.example.net").unwrap(), chal),
+            Err(WebauthnCError::Security)
+        ));
+
+        // Different scheme should be rejected
+        let (chal, _) = wan
+            .new_challenge_authenticate_builder(vec![cred.clone()], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        assert!(matches!(
+            wa.do_authentication(Url::parse("http://example.com/auth").unwrap(), chal),
+            Err(WebauthnCError::Security)
+        ));
+
+        // Check that a different protocol on the same hostname would be rejected
+        let (chal, _) = wan
+            .new_challenge_authenticate_builder(vec![cred.clone()], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        assert!(matches!(
+            wa.do_authentication(Url::parse("ftp://example.com/auth").unwrap(), chal),
+            Err(WebauthnCError::Security)
+        ));
+
+        // Check that a different hostname would be rejected
+        let (chal, _) = wan
+            .new_challenge_authenticate_builder(vec![cred.clone()], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        assert!(matches!(
+            wa.do_authentication(Url::parse("https://other-example.com/auth").unwrap(), chal),
+            Err(WebauthnCError::Security)
+        ));
+
+        // Parent domain of an allowed domain
+        let (chal, _) = wan
+            .new_challenge_authenticate_builder(vec![cred.clone()], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        assert!(matches!(
+            wa.do_authentication(Url::parse("https://example.net/auth").unwrap(), chal),
+            Err(WebauthnCError::Security)
+        ));
+    }
+
+    #[test]
+    fn softtoken_persistence() {
+        let _ = tracing_subscriber::fmt::try_init();
+        let wan = Webauthn::new_unsafe_experts_only(
+            "https://example.com/auth",
+            "example.com",
+            vec![url::Url::parse("https://example.com").unwrap()],
+            AUTHENTICATOR_TIMEOUT,
+            None,
+            None,
+        );
+
+        let (soft_token, ca_root) = SoftToken::new(true).unwrap();
+        let file = tempfile().unwrap();
+        let mut wa = SoftTokenFile::new(soft_token, file);
+        assert_eq!(wa.token.tokens.len(), 0);
+
+        let unique_id = [
+            158, 170, 228, 89, 68, 28, 73, 194, 134, 19, 227, 153, 107, 220, 150, 238,
+        ];
+        let name = "william";
+
+        let builder = wan
+            .new_challenge_register_builder(&unique_id, name, name)
+            .unwrap()
+            .attestation(AttestationConveyancePreference::Direct)
+            .user_verification_policy(UserVerificationPolicy::Preferred);
+
+        let (chal, reg_state) = wan.generate_challenge_register(builder).unwrap();
+
+        info!("🍿 challenge -> {:x?}", chal);
+
+        let r = wa
+            .do_registration(Url::parse("https://example.com").unwrap(), chal)
+            .map_err(|e| {
+                error!("Error -> {:x?}", e);
+                e
+            })
+            .expect("Failed to register");
+
+        let mut att_ca_builder = AttestationCaListBuilder::new();
+        att_ca_builder
+            .insert_device_x509(ca_root, AAGUID, "softtoken".to_string(), Default::default())
+            .expect("Failed to build att ca list");
+        let att_ca_list: AttestationCaList = att_ca_builder.build();
+
+        let cred = wan
+            .register_credential(&r, &reg_state, Some(&att_ca_list))
+            .unwrap();
+
+        info!("Credential -> {:?}", cred);
+
+        assert_eq!(wa.token.tokens.len(), 1);
+
+        // Save the credential to disk
+        let mut file: File = wa.try_into().unwrap();
+        assert!(file.stream_position().unwrap() > 0);
+
+        // Rewind and reload
+        file.rewind().unwrap();
+
+        let mut wa = SoftTokenFile::open(file).unwrap();
+        assert_eq!(wa.token.tokens.len(), 1);
+
+        let (chal, auth_state) = wan
+            .new_challenge_authenticate_builder(vec![cred], None)
+            .and_then(|b| wan.generate_challenge_authenticate(b))
+            .unwrap();
+
+        let r = wa
+            .do_authentication(Url::parse("https://example.com").unwrap(), chal)
+            .map_err(|e| {
+                error!("Error -> {:x?}", e);
+                e
+            })
+            .expect("Failed to auth");
+
+        let auth_res = wan
+            .authenticate_credential(&r, &auth_state)
+            .expect("webauth authentication denied");
+        info!("auth_res -> {:x?}", auth_res);
+    }
+
+    #[test]
+    fn perform_register_auth_with_command() {
+        let mut rng = rand::thread_rng();
+
+        let _ = tracing_subscriber::fmt::try_init();
+        let (mut soft_token, _) = SoftToken::new(true).unwrap();
+        let mut client_data_hash = vec![0; 32];
+        let mut user_id = vec![0; 16];
+        rng.fill_bytes(&mut client_data_hash);
+        rng.fill_bytes(&mut user_id);
+
+        let request = MakeCredentialRequest {
+            client_data_hash: client_data_hash.clone(),
+            rp: RelyingParty {
+                name: "example.com".to_string(),
+                id: "example.com".to_string(),
+            },
+            user: User {
+                id: Vec::from(user_id),
+                name: "sampleuser".to_string(),
+                display_name: "Sample User".to_string(),
+            },
+            pub_key_cred_params: vec![
+                PubKeyCredParams {
+                    type_: "public-key".to_string(),
+                    alg: -7,
+                },
+                PubKeyCredParams {
+                    type_: "public-key".to_string(),
+                    alg: -257,
+                },
+            ],
+            exclude_list: vec![],
+            options: None,
+            pin_uv_auth_param: None,
+            pin_uv_auth_proto: None,
+            enterprise_attest: None,
+        };
+
+        let response = perform_register_with_request(&mut soft_token, request, 10000).unwrap();
+
+        // All keys should be ints
+        let m: Value = serde_cbor_2::from_slice(response.as_slice()).unwrap();
+        let m = if let Value::Map(m) = m {
+            m
+        } else {
+            panic!("unexpected type")
+        };
+        assert!(m.keys().all(|k| matches!(k, Value::Integer(_))));
+
+        // Try to deserialise the MakeCredentialResponse again
+        let response =
+            <MakeCredentialResponse as CBORResponse>::try_from(response.as_slice()).unwrap();
+        trace!(?response);
+
+        // Run packed attestation verification
+        // https://www.w3.org/TR/webauthn-2/#sctn-packed-attestation
+        let mut att_stmt = if let Value::Map(m) = response.att_stmt.unwrap() {
+            m
+        } else {
+            panic!("unexpected type");
+        };
+        trace!(?att_stmt);
+        let signature = value_to_vec_u8(
+            att_stmt.remove(&Value::Text("sig".to_string())).unwrap(),
+            "att_stmt.sig",
+        )
+        .unwrap();
+
+        // Extract attestation certificate
+        let x5c = if let Value::Array(v) = att_stmt.remove(&Value::Text("x5c".to_string())).unwrap()
+        {
+            v
+        } else {
+            panic!("Unexpected type");
+        };
+        let x5c = value_to_vec_u8(x5c[0].to_owned(), "x5c[0]").unwrap();
+        let verification_cert = Certificate::from_der(&x5c).unwrap();
+
+        // Reconstruct verification data (auth_data + client_data_hash)
+        let mut verification_data =
+            value_to_vec_u8(response.auth_data.unwrap(), "verification_data").unwrap();
+        let auth_data_len = verification_data.len();
+        verification_data.reserve(client_data_hash.len());
+        verification_data.extend_from_slice(&client_data_hash);
+
+        assert!(x509_verify_signature(&verification_data, &signature, &verification_cert).is_ok());
+
+        // https://www.w3.org/TR/webauthn-2/#attestation-object
+        let cred_id_off = /* rp_id_hash */ 32 + /* flags */ 1 + /* counter */ 4 + /* aaguid */ 16;
+        let cred_id_len = u16::from_be_bytes(
+            (&verification_data[cred_id_off..cred_id_off + 2])
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let cred_id =
+            Vec::from((verification_data[cred_id_off + 2..cred_id_off + 2 + cred_id_len]).to_vec());
+
+        // Future assertions are signed with this COSEKey
+        let cose_key: Value = serde_cbor_2::from_slice(
+            &verification_data[cred_id_off + 2 + cred_id_len..auth_data_len],
+        )
+        .unwrap();
+        let cose_key = COSEKey::try_from(&cose_key).unwrap();
+
+        rng.fill_bytes(&mut client_data_hash);
+        let request = GetAssertionRequest {
+            client_data_hash: client_data_hash.clone(),
+            rp_id: "example.com".to_string(),
+            allow_list: vec![AllowCredentials {
+                type_: "public-key".to_string(),
+                id: cred_id.to_owned(),
+                transports: None,
+            }],
+            options: None,
+            pin_uv_auth_param: None,
+            pin_uv_auth_proto: None,
+        };
+        trace!(?request);
+
+        let response = perform_auth_with_request(&mut soft_token, request, 10000).unwrap();
+        let response =
+            <GetAssertionResponse as CBORResponse>::try_from(response.as_slice()).unwrap();
+        trace!(?response);
+
+        // Check correct matching credential
+        assert_eq!(response.credential.unwrap().id, cred_id);
+
+        // Check the signature
+        let signature = response.signature.unwrap();
+        let mut verification_data = response.auth_data.unwrap();
+        verification_data.reserve(client_data_hash.len());
+        verification_data.extend_from_slice(&client_data_hash);
+
+        assert!(cose_key
+            .verify_signature(&signature, &verification_data)
+            .unwrap());
+    }
+}

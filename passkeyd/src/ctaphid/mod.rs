@@ -151,3 +151,66 @@ pub enum CtapStatus {
     #[error("Vendor specific error")]
     VendorLast = 0xFF,
 }
+
+impl From<u8> for CtapStatus {
+    fn from(val: u8) -> Self {
+        match val {
+            0x00 => CtapStatus::Ok,
+            0x11 => CtapStatus::CborUnexpectedType,
+            0x12 => CtapStatus::InvalidCbor,
+            0x14 => CtapStatus::MissingParameter,
+            0x15 => CtapStatus::LimitExceeded,
+            0x17 => CtapStatus::FingerprintDatabaseFull,
+            0x18 => CtapStatus::LargeBlobStorageFull,
+            0x19 => CtapStatus::CredentialExcluded,
+            0x21 => CtapStatus::Processing,
+            0x22 => CtapStatus::InvalidCredential,
+            0x23 => CtapStatus::UserActionPending,
+            0x24 => CtapStatus::OperationPending,
+            0x25 => CtapStatus::NoOperations,
+            0x26 => CtapStatus::UnsupportedAlgorithm,
+            0x27 => CtapStatus::OperationDenied,
+            0x28 => CtapStatus::KeyStoreFull,
+            0x2B => CtapStatus::UnsupportedOption,
+            0x2C => CtapStatus::InvalidOption,
+            0x2D => CtapStatus::KeepaliveCancel,
+            0x2E => CtapStatus::NoCredentials,
+            0x2F => CtapStatus::UserActionTimeout,
+            0x30 => CtapStatus::NotAllowed,
+            0x31 => CtapStatus::PinInvalid,
+            0x32 => CtapStatus::PinBlocked,
+            0x33 => CtapStatus::PinAuthInvalid,
+            0x34 => CtapStatus::PinAuthBlocked,
+            0x35 => CtapStatus::PinNotSet,
+            0x36 => CtapStatus::PuatRequired,
+            0x37 => CtapStatus::PinPolicyViolation,
+            0x39 => CtapStatus::RequestTooLarge,
+            0x3A => CtapStatus::ActionTimeout,
+            0x3B => CtapStatus::UpRequired,
+            0x3C => CtapStatus::UvBlocked,
+            0x3D => CtapStatus::IntegrityFailure,
+            0x3E => CtapStatus::InvalidSubcommand,
+            0x3F => CtapStatus::UvInvalid,
+            0x40 => CtapStatus::UnauthorizedPermission,
+            0xDF => CtapStatus::SpecLast,
+            _ => CtapStatus::Other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ctap_status_from_u8() {
+        assert_eq!(CtapStatus::from(0x00), CtapStatus::Ok);
+        assert_eq!(CtapStatus::from(0x27), CtapStatus::OperationDenied);
+        assert_eq!(CtapStatus::from(0x2D), CtapStatus::KeepaliveCancel);
+        assert_eq!(CtapStatus::from(0x2E), CtapStatus::NoCredentials);
+        assert_eq!(CtapStatus::from(0x2F), CtapStatus::UserActionTimeout);
+        assert_eq!(CtapStatus::from(0x3C), CtapStatus::UvBlocked);
+        assert_eq!(CtapStatus::from(0x7F), CtapStatus::Other);
+        assert_eq!(CtapStatus::from(0xAA), CtapStatus::Other);
+    }
+}

@@ -30,7 +30,7 @@ pub fn dispatch(
     let result = match Request::deserialize(cbor).unwrap() {
         Request::GetInfo => get_info::handle(hid, config, channel),
         Request::MakeCredential(req) => make_credential::handle(hid, config, channel, req),
-        Request::GetAssertion(req) => get_assertion::handle(hid, config, channel, req),
+        Request::GetAssertion(req) => get_assertion::handle(hid, config, channel, req, cbor),
         Request::GetNextAssertion => get_next_assertion::handle(hid, config, channel),
         Request::ClientPin(req) => client_pin::handle(hid, config, channel, req), // todo!()
         Request::Reset => reset::handle(hid, config, channel),

@@ -29,15 +29,33 @@ use crate::ctaphid::ctaphid::Ctaphid;
 use crate::ctaphid::{CtapStatus, TransportError};
 use crate::utils::{Readiness, cancellable_ui, has_another_fido_device};
 
+pub enum GetOutcome {
+    Local(Response),
+    External(Vec<u8>),
+}
+
 pub fn get(
     hid: &mut Ctaphid,
     channel: Channel,
     config: &Config,
     req: Request,
-) -> anyhow::Result<Response> {
+    raw_cbor: &[u8],
+) -> anyhow::Result<GetOutcome> {
     let (rp_entity, mut passkeys) = load_passkeys(&req)?;
     let action = authorization_action(has_another_fido_device(), config.no_pass, passkeys.len());
-    let authorized_index = authorize(hid, channel, config, &rp_entity, &passkeys, action)?;
+    let authorized_index = match authorize(hid, channel, config, &rp_entity, &passkeys, action) {
+        Ok(idx) => idx,
+        Err(e) => {
+            if let Some(ctap_err) = e.downcast_ref::<CtapStatus>() {
+                if *ctap_err == CtapStatus::NoCredentials && config.allow_external_keys {
+                    info!("No local credentials found; ALLOW_EXTERNAL_KEYS enabled, starting caBLE hybrid transport...");
+                    let cable_res = perform_cable_assertion(hid, channel, raw_cbor)?;
+                    return Ok(GetOutcome::External(cable_res));
+                }
+            }
+            return Err(e);
+        }
+    };
     let authorized_passkey = passkeys.swap_remove(authorized_index);
 
     let rp_id_hash = sha2::Sha256::digest(req.rp_id.as_bytes()).into();
@@ -88,7 +106,7 @@ pub fn get(
 
     authorized_passkey.sign_increment(rp_entity);
 
-    Ok(response)
+    Ok(GetOutcome::Local(response))
 }
 
 fn load_passkeys(req: &Request) -> anyhow::Result<(PublicKeyCredentialRpEntity, Vec<Passkey>)> {
@@ -123,6 +141,7 @@ fn load_passkeys(req: &Request) -> anyhow::Result<(PublicKeyCredentialRpEntity, 
     Ok((rp_entity, passkeys))
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum AuthorizationAction {
     NoCredentials,
     UseOnlyPasskey,
@@ -136,25 +155,29 @@ fn authorization_action(
     passkey_count: usize,
 ) -> AuthorizationAction {
     match (has_another_fido_dev, no_pass, passkey_count) {
-        // no other key, no password
-        // and no credentials either
-        // send the no cerds directly
-        (false, true, 0) => AuthorizationAction::NoCredentials,
+        // no other key and no credentials either,
+        // send the no cerds directly. the password
+        // does not matter here, there is nothing to
+        // unlock in the first place.
+        (false, _, 0) => AuthorizationAction::NoCredentials,
 
         // no other key, no password
         // and but one credential
         // skip ui, send the cerds directly
         (false, true, 1) => AuthorizationAction::UseOnlyPasskey,
 
-        // another key, no password,
-        // but either no or single cerd
+        // another key, but either no or single cerd
         // the user intent is probably to use
         // either security key or use passkeyd
-        // so, presence to reduce ambiguity
-        (true, true, 0..=1) => AuthorizationAction::Presence,
+        // so, presence to reduce ambiguity.
+        // with no cerd of ours the password does not
+        // matter either, presence still lets the user
+        // reach for the external key.
+        (true, _, 0) => AuthorizationAction::Presence,
+        (true, true, 1) => AuthorizationAction::Presence,
 
         // If no another key, no password, there are more than 1 cerds, selection is obviously needed.
-        // If another key, has password, aribitray cerds, selection will handle it.
+        // If another key, has password, arbitrary cerds, selection will handle it.
         _ => AuthorizationAction::Selection,
     }
 }
@@ -219,6 +242,10 @@ fn authorize_selection(
     rp_entity: &PublicKeyCredentialRpEntity,
     passkeys: &[Passkey],
 ) -> anyhow::Result<usize> {
+    if passkeys.is_empty() {
+        anyhow::bail!(CtapStatus::NoCredentials);
+    }
+
     let ui_state = SelectUI {
         rp: rp_entity,
         other_uis: passkeys
@@ -245,8 +272,12 @@ fn authenticate_handler(
     ui_state: SelectUI,
 ) -> anyhow::Result<usize> {
     let mut child = spawn_ui(config, UI::KeySelect, ui_state);
-    let mut stdin = child.inner.stdin.take().unwrap();
-    let mut stdout = child.inner.stdout.take().unwrap();
+    let mut stdin = child.inner.stdin.take();
+    let mut stdout = child
+        .inner
+        .stdout
+        .take()
+        .context("failed to get UI stdout")?;
     let mut event_buf = Vec::new();
 
     loop {
@@ -255,12 +286,13 @@ fn authenticate_handler(
             match event {
                 UIMessage::SelectionDoneMaybeStartAuth(i) => {
                     if !config.no_pass {
+                        let stdin = stdin.as_mut().context("child stdin unavailable")?;
                         authorization(
                             hid,
                             channel,
                             config,
                             &mut child,
-                            &mut stdin,
+                            stdin,
                             &mut stdout,
                             &mut event_buf,
                         )?;
@@ -541,29 +573,72 @@ fn authorization_pass(
 /// If `Some(())` is retuned, cancel request is received
 /// None is returned, no cancel request
 fn try_recv_cancel(hid: &mut Ctaphid, channel: Channel) -> anyhow::Result<Option<()>> {
-    if !hid.hid.is_readable() {
-        return Ok(None);
-    }
-    // get_webauthn is responsible for readable states
-    // is_readble just read the status provided by get_webauthn
-    // so, get_webauth must be called
-    match hid.get_webauthn()? {
-        Some((incoming_channel, _)) => {
-            // Well, could handle this too by passing it to the dispatcher.
-            // But I don't think it would be that useful. I mean, why the hell are you even invoking
-            // auth twice(you need to invoke in one tab and then switch to another tab to invoke another)?
-            // If you're exercising free will, that's a different case.
-            // otherwise, GET YOUR SELF A BRAIN CHECK
-
-            error!("sent busy to channel {incoming_channel:?} caz currently processing {channel}");
-
-            anyhow::bail!(TransportError {
-                channel: incoming_channel,
-                err: DeviceError::ChannelBusy
-            });
+    while hid.hid.is_readable() {
+        match hid.get_webauthn()? {
+            Some((incoming_channel, _)) => {
+                error!("sent busy to channel {incoming_channel:?} caz currently processing {channel}");
+                anyhow::bail!(TransportError {
+                    channel: incoming_channel,
+                    err: DeviceError::ChannelBusy
+                });
+            }
+            None if hid.is_cancelled(channel) => return Ok(Some(())),
+            _ => (),
         }
-        None if hid.is_cancelled(channel) => Ok(Some(())),
-        _ => Ok(None),
+    }
+    if hid.is_cancelled(channel) {
+        Ok(Some(()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn perform_cable_assertion(
+    hid: &mut Ctaphid,
+    channel: Channel,
+    raw_cbor: &[u8],
+) -> anyhow::Result<Vec<u8>> {
+    let (tx, rx) = mpsc::channel();
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let raw_cbor_vec = raw_cbor.to_vec();
+
+    let cable_thread = std::thread::spawn(move || {
+        let res = crate::cable::perform_hybrid_assertion(&raw_cbor_vec, cancel_rx);
+        let _ = tx.send(res);
+    });
+
+    let mut last_keepalive = std::time::Instant::now();
+
+    loop {
+        if let Some(()) = try_recv_cancel(hid, channel)? {
+            info!("Cancellation received from host; terminating caBLE session");
+            let _ = cancel_tx.send(());
+            let _ = cable_thread.join();
+            hid.clear_cancelled(channel);
+            anyhow::bail!(CtapStatus::KeepaliveCancel);
+        }
+
+        // FIDO CTAPHID spec: Send periodic keepalive (0x02 = STATUS_UPNEEDED) every 100ms
+        // so the host/browser knows the authenticator is waiting for user presence and keeps
+        // its HID read loop responsive to cancellation events.
+        if last_keepalive.elapsed() >= Duration::from_millis(100) {
+            let _ = hid.send_64response(channel, ctaphid_types::Command::KeepAlive, [0x02]);
+            last_keepalive = std::time::Instant::now();
+        }
+
+        match rx.try_recv() {
+            Ok(res) => {
+                let _ = cable_thread.join();
+                return res;
+            }
+            Err(TryRecvError::Empty) => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(TryRecvError::Disconnected) => {
+                let _ = cable_thread.join();
+                anyhow::bail!("caBLE assertion thread terminated unexpectedly");
+            }
+        }
     }
 }
 
@@ -630,3 +705,84 @@ fn get_username_from_uid(uid: libc::uid_t) -> Option<String> {
     let cstr = unsafe { std::ffi::CStr::from_ptr(passwd.pw_name) };
     cstr.to_str().ok().map(|username| username.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_authorization_action_zero_credentials() {
+        // When there are no credentials stored, it should always return NoCredentials,
+        // allowing caBLE hybrid transport or another authenticator to handle the request.
+        assert_eq!(
+            authorization_action(false, false, 0),
+            AuthorizationAction::NoCredentials
+        );
+        assert_eq!(
+            authorization_action(false, true, 0),
+            AuthorizationAction::NoCredentials
+        );
+        assert_eq!(
+            authorization_action(true, false, 0),
+            AuthorizationAction::Presence
+        );
+        assert_eq!(
+            authorization_action(true, true, 0),
+            AuthorizationAction::Presence
+        );
+    }
+
+    #[test]
+    fn test_authorization_action_single_credential() {
+        // No other key, password disabled: skip UI directly
+        assert_eq!(
+            authorization_action(false, true, 1),
+            AuthorizationAction::UseOnlyPasskey
+        );
+        // Another key present, password disabled: user presence check
+        assert_eq!(
+            authorization_action(true, true, 1),
+            AuthorizationAction::Presence
+        );
+        // Password enabled: selection & authentication required
+        assert_eq!(
+            authorization_action(false, false, 1),
+            AuthorizationAction::Selection
+        );
+        assert_eq!(
+            authorization_action(true, false, 1),
+            AuthorizationAction::Selection
+        );
+    }
+
+    #[test]
+    fn test_authorization_action_multiple_credentials() {
+        // Multiple credentials always require selection
+        assert_eq!(
+            authorization_action(false, false, 2),
+            AuthorizationAction::Selection
+        );
+        assert_eq!(
+            authorization_action(false, true, 2),
+            AuthorizationAction::Selection
+        );
+        assert_eq!(
+            authorization_action(true, false, 2),
+            AuthorizationAction::Selection
+        );
+        assert_eq!(
+            authorization_action(true, true, 2),
+            AuthorizationAction::Selection
+        );
+    }
+
+    #[test]
+    fn test_get_outcome_variants() {
+        let external = GetOutcome::External(vec![0x01, 0x02]);
+        match external {
+            GetOutcome::External(bytes) => assert_eq!(bytes, vec![0x01, 0x02]),
+            _ => panic!("Expected GetOutcome::External"),
+        }
+    }
+}
+
