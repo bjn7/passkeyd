@@ -2,6 +2,7 @@ use ctap_types::{serde::cbor_deserialize, webauthn::PublicKeyCredentialRpEntity}
 use sha2::Digest;
 use std::{
     fs,
+    env,
     path::{Path, PathBuf},
 };
 pub mod layout;
@@ -10,14 +11,15 @@ use log::info;
 
 use crate::utils::CborVec;
 
-#[cfg(debug_assertions)]
-const FSBASE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/TEMPP_DATABASE");
-
-#[cfg(not(debug_assertions))]
-const FSBASE: &str = "/var/lib/passkeyd/database";
-
 pub fn database_dir() -> PathBuf {
-    PathBuf::from(FSBASE)
+    #[cfg(debug_assertions)]
+    return PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/TEMPP_DATABASE"));
+
+    #[cfg(not(debug_assertions))]
+    match env::var("PASSKEYD_DATABASE_DIR") {
+        Ok(v) => PathBuf::from(v),
+        _ => PathBuf::from("/var/lib/passkeyd/database")
+    }
 }
 
 // A metadata is a PublicKeyCredentialRpEntity
