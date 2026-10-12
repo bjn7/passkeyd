@@ -1,4 +1,4 @@
-use zbus::{Result, proxy};
+use zbus::{Result, proxy, zvariant::OwnedObjectPath};
 
 #[proxy(
     default_service = "net.reactivated.Fprint",
@@ -7,7 +7,7 @@ use zbus::{Result, proxy};
 )]
 
 pub trait FprintManager {
-    fn get_default_device(&self) -> Result<String>;
+    fn get_default_device(&self) -> Result<OwnedObjectPath>;
 }
 
 #[proxy(
