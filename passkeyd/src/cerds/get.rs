@@ -367,23 +367,27 @@ fn authorization_fprint(
     _event_buf: &mut Vec<u8>,
 ) -> anyhow::Result<AuthorizationOutcome> {
     let Ok(connection) = Connection::session() else {
+        error!("[Fingerprint] bus connection failed");
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
         ));
     };
     let Ok(fprint_manager) = FprintManagerProxyBlocking::new(&connection) else {
+        error!("[Fingerprint] manager proxy failed");
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
         ));
     };
 
     let Ok(device_path) = fprint_manager.get_default_device() else {
+        error!("[Fingerprint] get_default_device failed");
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
         ));
     };
 
     let Ok(fprint_device) = FprintDeviceProxyBlocking::new(&connection, device_path) else {
+        error!("[Fingerprint] device proxy failed");
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
         ));
@@ -391,20 +395,20 @@ fn authorization_fprint(
 
     let username = get_username_from_uid(config.gui_uid).ok_or(CtapStatus::OperationDenied)?;
     let Ok(enrolled) = fprint_device.list_enrolled_fingers(&username) else {
-        info!("[Fingureprint] No enrolled key found");
+        info!("[Fingerprint] No enrolled key found");
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
         ));
     };
 
     if enrolled.is_empty() {
-        info!("[Fingureprint] No enrolled key found");
+        info!("[Fingerprint] No enrolled key found");
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
         ));
     }
 
-    debug!("[Fingureprint] Claming device...");
+    debug!("[Fingerprint] Claming device...");
     if fprint_device.claim(&username).is_err() {
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
@@ -436,7 +440,7 @@ fn authorization_fprint(
                 "verify-match" => {
                     let _ = fprint_device.verify_stop();
                     let _ = fprint_device.release();
-                    debug!("[Fingureprint] Releasing device...");
+                    debug!("[Fingerprint] Releasing device...");
                     return Ok(AuthorizationOutcome::Authorized);
                 }
                 "verify-no-match" => {
@@ -445,7 +449,7 @@ fn authorization_fprint(
                     if attempts >= MAX_ATTEMPTS {
                         let _ = fprint_device.verify_stop();
                         let _ = fprint_device.release();
-                        debug!("[Fingureprint] Releasing device...");
+                        debug!("[Fingerprint] Releasing device...");
                         return Ok(AuthorizationOutcome::UnAuthorized);
                     }
 
@@ -454,7 +458,7 @@ fn authorization_fprint(
                 "verify-unknown-error" => {
                     let _ = fprint_device.verify_stop();
                     let _ = fprint_device.release();
-                    debug!("[Fingureprint] Releasing device...");
+                    debug!("[Fingerprint] Releasing device...");
                     return Ok(AuthorizationOutcome::FallbackToPassword(
                         FallbackToPasswordReason::FingerprintDeviceUnavailable,
                     ));
