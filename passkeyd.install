@@ -35,10 +35,10 @@ post_install() {
         sed -i "s|^FRONT_SELECT=.*|FRONT_SELECT=/usr/lib/passkeyd/passkeyd-${ui}-select|" /etc/passkeyd.conf
         sed -i "s|^FRONT_SELECTION=.*|FRONT_SELECTION=/usr/lib/passkeyd/passkeyd-${ui}-selection|" /etc/passkeyd.conf
 
-        if grep -q '^AUTH=' /etc/passkeyd.conf; then
-            sed -i "s|^AUTH=.*|AUTH=${auth}|" /etc/passkeyd.conf
+        if grep -q '^AUTH_TYPE=' /etc/passkeyd.conf; then
+            sed -i "s|^AUTH_TYPE=.*|AUTH_TYPE=${auth}|" /etc/passkeyd.conf
         else
-            echo "AUTH=${auth}" >> /etc/passkeyd.conf
+            echo "AUTH_TYPE=${auth}" >> /etc/passkeyd.conf
         fi
     fi
 
