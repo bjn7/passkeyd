@@ -366,7 +366,7 @@ fn authorization_fprint(
     _stdout: &mut ChildStdout,
     _event_buf: &mut Vec<u8>,
 ) -> anyhow::Result<AuthorizationOutcome> {
-    let Ok(connection) = Connection::session() else {
+    let Ok(connection) = Connection::system() else {
         error!("[Fingerprint] bus connection failed");
         return Ok(AuthorizationOutcome::FallbackToPassword(
             FallbackToPasswordReason::FingerprintDeviceUnavailable,
