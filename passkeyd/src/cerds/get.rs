@@ -25,9 +25,11 @@ use crate::auth::fprintd::{FprintDeviceProxyBlocking, FprintManagerProxyBlocking
 use crate::auth::pam::InteractiveConversation;
 use crate::auth::pass::verify_password;
 use crate::cryptography;
-use crate::ctaphid::ctaphid::Ctaphid;
+use crate::ctaphid::ctaphid::{Ctaphid, KeepAliveStatus};
 use crate::ctaphid::{CtapStatus, TransportError};
 use crate::utils::{Readiness, cancellable_ui, has_another_fido_device};
+
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub fn get(
     hid: &mut Ctaphid,
@@ -305,7 +307,7 @@ fn authenticate_handler(
                 return Ok(i);
             }
             Some(_) => anyhow::bail!("unexpected message from the UI"),
-            None => std::thread::sleep(Duration::from_millis(200)),
+            None => std::thread::sleep(POLL_INTERVAL),
         }
     }
 }
@@ -486,7 +488,7 @@ fn authorization_fprint(
             anyhow::bail!(CtapStatus::KeepaliveCancel);
         };
 
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
@@ -545,7 +547,7 @@ fn authorization_pam(
             Err(TryRecvError::Empty) => (),
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
@@ -575,13 +577,17 @@ fn authorization_pass(
             }
             send_command(stdin, ServiceMessage::Retry)?;
         };
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
 /// If `Some(())` is retuned, cancel request is received
 /// None is returned, no cancel request
 fn try_recv_cancel(hid: &mut Ctaphid, channel: Channel) -> anyhow::Result<Option<()>> {
+    if let Err(e) = hid.send_keep_alive(channel, KeepAliveStatus::UpNeeded) {
+        debug!("failed to send keepalive on {channel}: {e}");
+    }
+
     if !hid.hid.is_readable() {
         return Ok(None);
     }
@@ -596,7 +602,7 @@ fn try_recv_cancel(hid: &mut Ctaphid, channel: Channel) -> anyhow::Result<Option
             // If you're exercising free will, that's a different case.
             // otherwise, GET YOUR SELF A BRAIN CHECK
 
-            error!("sent busy to channel {incoming_channel:?} caz currently processing {channel}");
+            error!("sent busy to channel {incoming_channel} caz currently processing {channel}");
 
             anyhow::bail!(TransportError {
                 channel: incoming_channel,

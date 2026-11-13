@@ -5,10 +5,13 @@ use std::{
 
 use anyhow::Context;
 use ctaphid_types::{Channel, DeviceError};
-use log::{error, info};
+use log::{debug, error, info};
 use passkeyd_abi::utils::SystemdChild;
 
-use crate::ctaphid::{CtapStatus, TransportError, ctaphid::Ctaphid};
+use crate::ctaphid::{
+    CtapStatus, TransportError,
+    ctaphid::{Ctaphid, KeepAliveStatus},
+};
 
 pub trait Readiness {
     fn is_readable(&self) -> bool;
@@ -114,6 +117,10 @@ pub fn cancellable_ui(
     mut child: SystemdChild,
 ) -> anyhow::Result<UIResponse> {
     loop {
+        if let Err(e) = hid.send_keep_alive(channel, KeepAliveStatus::UpNeeded) {
+            debug!("failed to send keepalive on {channel}: {e}");
+        }
+
         if hid.hid.is_readable() {
             // get_webauthn is responsible for readable states
             // is_readble just read the status provided by get_webauthn

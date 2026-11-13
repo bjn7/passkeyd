@@ -26,6 +26,12 @@ pub struct ChannelPayload {
     pub next_expected_sequence: u8,
 }
 
+#[repr(u8)]
+pub enum KeepAliveStatus {
+    Processing = 0x01,
+    UpNeeded = 0x02,
+}
+
 pub struct Ctaphid {
     pub hid: hid::UHIDDevice<File>,
     pub payload_stack: HashMap<HashableChannel, ChannelPayload>,
@@ -292,5 +298,13 @@ impl Ctaphid {
         self.hid.write(report.as_ref())?;
 
         Ok(())
+    }
+
+    pub fn send_keep_alive(
+        &mut self,
+        channel: Channel,
+        status: KeepAliveStatus,
+    ) -> anyhow::Result<()> {
+        self.send_64response(channel, Command::KeepAlive, [status as u8])
     }
 }
